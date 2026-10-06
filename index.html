@@ -144,6 +144,12 @@
     .owned { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 999px; background: #ef444426; color: #fca5a5; font-size: 12px; font-weight: 700; }
     .hit { padding: 10px 0; border-bottom: 1px solid var(--line); }
     #reader { display: none; }
+    #liveov { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 16px; }
+    #liveov[hidden] { display: none; }
+    #live { width: 100%; max-width: 560px; margin: 0 auto; border-radius: 14px; overflow: hidden; }
+    #live video { width: 100% !important; display: block; }
+    .livehint { color: #fff; text-align: center; font-size: 18px; font-weight: 700; }
+    #liveov .row { justify-content: center; }
     .hint { margin-top: 12px; font-size: 14px; color: var(--muted); font-weight: 600; }
     #pick { margin-top: 6px; }
     .pick { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; margin-top: 6px; background: var(--surface2); color: var(--text); font-weight: 500; font-size: 15px; }
@@ -373,6 +379,14 @@
 
   <div id="out"></div>
   <div id="reader"></div>
+  <div id="liveov" hidden>
+    <div class="livehint">Point the camera at the barcode</div>
+    <div id="live"></div>
+    <div class="row">
+      <button type="button" class="ghost" onclick="liveToPhoto()">📸 Take a photo instead</button>
+      <button type="button" class="ghost" onclick="liveStop()">Cancel</button>
+    </div>
+  </div>
 
   <details class="subtle" id="brandbox">
     <summary>Manage paint brands</summary>
@@ -578,11 +592,24 @@
     if (!box) return;
     var p = ownedCopy(el('fbrand').value, el('fname').value, el('frange').value);
     box.hidden = !p;
+    var code = el('fcode') && el('fcode').value;
     if (p) box.innerHTML = '🛑 <b>You already have this paint at home. Don\'t buy it!</b><br>' +
       esc(p.name) + ' · ' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + ' · qty ' + esc(p.qty) +
-      '<div class="row"><button type="button" class="ghost" onclick="addOneMore(' + p.row + ')">＋1 to the one I have</button></div>';
+      '<div class="row">' + (code ? '<button type="button" onclick="linkCode(' + p.row + ')">✅ That\'s it. Remember this barcode</button>' : '') +
+      '<button type="button" class="ghost" onclick="addOneMore(' + p.row + ')">＋1 to the one I have</button></div>';
     el('faddbtn').textContent = p ? 'Add it as a new entry anyway' : 'Add to my paints';
     closeCheck(!p);
+  }
+
+  // Saves the scanned barcode on a paint you already have, so the next scan finds it straight away.
+  function linkCode(row) {
+    var code = el('fcode').value;
+    INV = null;
+    show('<div class="card">Saving the barcode…</div>');
+    google.script.run.withSuccessHandler(function (res) {
+      render(res);
+      el('out').firstChild.insertAdjacentHTML('afterbegin', '<div class="hint">🔗 Barcode saved. Next time this scan finds it straight away.</div>');
+    }).withFailureHandler(fail).linkBarcode(row, code);
   }
 
   // At the store: if you don't have this paint, say which of yours is the same colour.
@@ -886,6 +913,22 @@
     }).withFailureHandler(fail).addPaints(list);
   }
 
+  function bcFormats() {
+    var F = window.Html5QrcodeSupportedFormats;
+    return F ? [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39] : undefined;
+  }
+
+  // A smaller copy of a photo. Phone photos are huge, and the barcode reader often misses codes in them.
+  async function shrink(file, max) {
+    var bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    var s = Math.min(1, max / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * s);
+    c.height = Math.round(bmp.height * s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    var blob = await new Promise(function (r) { c.toBlob(r, 'image/jpeg', 0.92); });
+    return new File([blob], 'scan.jpg', { type: 'image/jpeg' });
+  }
+
   async function decode(file) {
     if ('BarcodeDetector' in window) {
       try {
@@ -894,8 +937,61 @@
         if (found.length) return found[0].rawValue;
       } catch (e) { /* fall back below */ }
     }
-    return await new Html5Qrcode('reader').scanFile(file, false);
+    var lib = new Html5Qrcode('reader', { formatsToSupport: bcFormats(), verbose: false });
+    try { return await lib.scanFile(file, false); } catch (e) { /* try smaller copies */ }
+    var sizes = [1600, 1000, 640];
+    for (var i = 0; i < sizes.length; i++) {
+      try { return await lib.scanFile(await shrink(file, sizes[i]), false); } catch (e) { /* next size */ }
+    }
+    throw new Error('No barcode found');
   }
+
+  // ---------- Live camera scanning (the installed app; Google's page can't use the camera live) ----------
+  var LIVE = null;
+  function liveOk() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext &&
+      !/script\.google|googleusercontent/.test(location.hostname);
+  }
+  function liveStart() {
+    el('liveov').hidden = false;
+    LIVE = new Html5Qrcode('live', { formatsToSupport: bcFormats(), verbose: false,
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+    LIVE.start({ facingMode: 'environment' },
+      { fps: 12, qrbox: function (w, h) { return { width: Math.round(w * 0.85), height: Math.round(Math.min(h * 0.5, w * 0.45)) }; } },
+      async function (code) {
+        if (!LIVE || LIVE.done) return; // already handled this scan
+        LIVE.done = true;
+        // Keep a still of the label, so a barcode the app doesn't know yet can still be read by its name.
+        var still = null, v = document.querySelector('#live video');
+        try {
+          var c = document.createElement('canvas');
+          c.width = v.videoWidth; c.height = v.videoHeight;
+          c.getContext('2d').drawImage(v, 0, 0);
+          var blob = await new Promise(function (r) { c.toBlob(r, 'image/jpeg', 0.92); });
+          if (blob) still = new File([blob], 'scan.jpg', { type: 'image/jpeg' });
+        } catch (e) { /* no still, that's fine */ }
+        liveStop();
+        if (navigator.vibrate) navigator.vibrate(60);
+        el('code').value = code;
+        check(code, still);
+      }, function () { /* no code in this frame yet */ })
+      .catch(function () { liveStop(); el('photo').click(); });
+  }
+  function liveStop() {
+    el('liveov').hidden = true;
+    var l = LIVE;
+    LIVE = null;
+    if (l) { try { l.stop().then(function () { l.clear(); }, function () {}); } catch (e) { /* already stopped */ } }
+  }
+  function liveToPhoto() {
+    liveStop();
+    el('photo').click();
+  }
+  document.querySelector('label.scan').addEventListener('click', function (e) {
+    if (!liveOk() || e.target === el('photo')) return;
+    e.preventDefault();
+    liveStart();
+  });
 
   function check(code, file) {
     code = String(code || '').trim();
@@ -972,8 +1068,11 @@
     var g = res.guess || {};
     show((res.manual ? '<div class="card"><div class="big">✍️ Add a paint</div>' +
         '<div class="muted">Pick it from the paint list, or fill in the boxes yourself. Not listed? Choose “Add my own” under Brand or Range.</div>'
+      : res.code ? '<div class="card"><div class="big">🔎 New barcode: which paint is it?</div>' +
+        '<div class="muted">I haven\'t seen barcode ' + esc(res.code) + ' before. Search for the paint below. ' +
+        'If you already have it, tap <b>That\'s it. Remember this barcode</b> and next time it\'s instant. If not, add it.</div>'
       : '<div class="card no"><div class="big">❌ Not in your collection</div>' +
-        '<div class="muted">' + (res.code ? 'Barcode ' + esc(res.code) + '. ' : '') + 'Bought it? Add it:</div>') +
+        '<div class="muted">Bought it? Add it:</div>') +
       (g.title ? '<div class="hint">✨ Filled in from the barcode database: “' + esc(g.title) + '” — check it before saving.</div>' : '') +
       '<div class="hint" id="labelhint"></div>' +
       '<div id="labelpicks"></div>' +
