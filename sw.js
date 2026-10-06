@@ -1,6 +1,6 @@
 // Offline helper: keeps the app and the paint lists on the device so it opens fast.
 // Your own data always comes fresh from your Google Sheet (those requests are never cached).
-const CACHE = 'paint-checker-c298a166c3';
+const CACHE = 'paint-checker-ad4b614ce4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
@@ -12,7 +12,8 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET' || url.hostname.endsWith('google.com') || url.hostname.endsWith('googleusercontent.com')) return;
   if (url.origin === location.origin) {
     // The app itself: newest version when online, saved copy when not.
-    e.respondWith(fetch(req).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return r; })
+    // (no-cache: always ask the web host for the newest copy instead of reusing the phone's saved one)
+    e.respondWith(fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return r; })
       .catch(() => caches.match(req).then(r => r || caches.match('./index.html'))));
     return;
   }

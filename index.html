@@ -61,22 +61,42 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "c298a166c3";
+    var VERSION = "ad4b614ce4";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
           v = v.trim();
           if (!v || v === VERSION) return;
-          // Only try once per new version, in case the web host is still handing out the old page for a few minutes.
-          try { if (sessionStorage.getItem('pc-tried') === v) return; sessionStorage.setItem('pc-tried', v); } catch (e) {}
+          // At most one try a minute, in case the web host is still handing out the old page for a few minutes.
+          try {
+            var last = JSON.parse(localStorage.getItem('pc-tried') || '{}');
+            if (last.v === v && Date.now() - last.t < 60000) return;
+            localStorage.setItem('pc-tried', JSON.stringify({ v: v, t: Date.now() }));
+          } catch (e) {}
           location.reload();
         }, function () {});
     }
+
+    // Shows any error on screen (so a screenshot says what went wrong).
+    function errBox(msg) {
+      if (/^Script error.?$|ResizeObserver/i.test(msg)) return; // harmless browser noise
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;left:12px;right:12px;top:12px;z-index:200;padding:12px 14px;border-radius:12px;background:#5a1d1d;color:#fff;font:14px system-ui,sans-serif';
+      d.textContent = '⚠️ ' + msg + ' (version ' + VERSION + ')';
+      d.onclick = function () { d.remove(); };
+      (document.body || document.documentElement).appendChild(d);
+      setTimeout(function () { d.remove(); }, 12000);
+    }
+    window.addEventListener('error', function (e) { errBox(e.message || 'Something went wrong'); });
+    window.addEventListener('unhandledrejection', function (e) { errBox(String(e.reason && e.reason.message || e.reason || 'Something went wrong')); });
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') checkUpdate(); });
     window.addEventListener('load', checkUpdate);
     document.addEventListener('DOMContentLoaded', function () {
       var box = document.getElementById('brandbox');
-      if (box) box.insertAdjacentHTML('afterend', '<div class="muted" style="margin-top:18px;font-size:12px;text-align:center">App version ' + VERSION + '</div>');
+      var tag = '<div class="muted" style="margin-top:18px;font-size:12px;text-align:center">App version ' + VERSION + '</div>';
+      if (box) box.insertAdjacentHTML('afterend', tag);
+      var pout = document.getElementById('pout');
+      if (pout) pout.insertAdjacentHTML('afterend', tag);
     });
 
     // An "Install app" button in the top bar, shown when the browser says the app can be installed.
@@ -1054,7 +1074,9 @@
       el('camvid').srcObject = s;
       el('camvid').play().catch(function () {});
     } catch (e) {
-      el('camhint').textContent = 'The camera is blocked. Allow the camera for this app in your phone settings, or tap 🖼 Gallery.';
+      el('camhint').textContent = (e && e.name === 'NotAllowedError'
+        ? 'The camera is blocked. Allow the camera for this app in your phone settings, or tap 🖼 Gallery.'
+        : 'The camera didn\'t start (' + (e && (e.name || e.message) || 'unknown') + '). Tap 🖼 Gallery, or try again.');
     }
   }
   function camSnap() {
