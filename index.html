@@ -119,7 +119,13 @@
     .scan { display: block; text-align: center; background: var(--accent); color: #fff; padding: 22px; border-radius: 16px; font-size: 20px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px #4f8cff33; }
     input[type=file] { display: none; }
     .addbtn { width: 100%; margin-top: 12px; padding: 14px; font-size: 16px; }
-    .addrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .addrow { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    .quickrow { margin-top: 12px; }
+    .quickrow input { min-width: 0; }
+    .quickrow button { padding-left: 14px; padding-right: 14px; white-space: nowrap; }
+    .qrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .qrow .grow { flex: 1; min-width: 0; }
+    .qrow button { padding: 8px 12px; white-space: nowrap; }
     .addrow .addbig { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 16px 10px; font-size: 17px; font-weight: 700; border-radius: 16px; cursor: pointer; }
     .addbig .muted { font-size: 13px; font-weight: 400; margin-top: 4px; }
     .addmenu { margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
@@ -367,16 +373,18 @@
     <input id="photo" type="file" accept="image/*" capture="environment">
   </label>
 
+  <div class="row quickrow">
+    <input id="code" type="text" autocomplete="off" placeholder="Type a paint: Mephiston, 70.950, MPA-013" oninput="quickList()"
+      onkeydown="if (event.key === 'Enter') { event.preventDefault(); quickAdd(); }">
+    <button type="button" class="ghost" onclick="check(el('code').value)">Check</button>
+    <button type="button" onclick="quickAdd()">＋ Add</button>
+  </div>
+  <div id="quick"></div>
+
   <div class="addrow" id="addmenu">
     <label class="ghost addbig">📸 From photos<span class="muted">Several paints at once</span>
       <input id="photos" type="file" accept="image/*" multiple>
     </label>
-    <button type="button" class="ghost addbig" onclick="addByHand()">✍️ Type one in<span class="muted">Search the list or fill it in</span></button>
-  </div>
-
-  <div class="row">
-    <input id="code" type="text" placeholder="…or type a barcode, code or name (MPA-013, 70.950, Mephiston)">
-    <button onclick="check(document.getElementById('code').value)">Check</button>
   </div>
 
   <div id="out"></div>
@@ -1041,6 +1049,86 @@
   function showOwned(row) {
     var p = (INV || []).filter(function (x) { return x.row === row; })[0];
     if (p) render({ found: true, paint: p });
+  }
+
+  // ---------- Quick add: type a paint, tap Add ----------
+  function isBarcode(q) { return /^\d{6,14}$/.test(String(q).replace(/[\s-]/g, '')); }
+  function quickHits(q) {
+    q = String(q).trim();
+    if (!q || isBarcode(q)) return [];
+    return findInCatalog(q.replace(/^mpa[-\s]?/i, '')).slice(0, 6);
+  }
+  function codeKey(c) { return String(c).toLowerCase().replace(/^mpa[-\s]?/, '').replace(/^([a-z]*)0+(?=\d)/, '$1'); }
+  // True when the typed text is exactly this paint's number or name (not just part of it).
+  function quickExact(p, q) {
+    return (!!p.code && codeKey(p.code) === codeKey(q.trim())) || looseName(p.name) === looseName(q) ||
+      looseName((p.code ? p.code + ' ' : '') + p.name) === looseName(q);
+  }
+
+  function quickList(note) {
+    var q = el('code').value;
+    Promise.all([catalogReady, fetchInv().catch(function () {})]).then(function () {
+      if (el('code').value !== q) return; // you've typed more since
+      var hits = quickHits(q);
+      el('quick').innerHTML = (note ? '<div class="hint">' + note + '</div>' : '') + hits.map(function (p) {
+        var have = ownedCopy(p.brand, (p.code ? p.code + ' ' : '') + p.name, p.range);
+        return '<div class="qrow"><span class="sw" style="background:' + (p.hex || 'transparent') + '"></span>' +
+          '<span class="grow"><b>' + esc(p.name) + '</b> <span class="muted">' + esc([p.brand, p.range, p.code].filter(Boolean).join(' · ')) + '</span>' +
+          (have ? '<br><span class="owned">✅ You have ' + esc(have.qty) + '</span>' : '') + '</span>' +
+          (have ? '<button type="button" class="ghost" onclick="quickMore(' + have.row + ')">＋1</button>'
+            : '<button type="button" onclick="quickAddPaint(' + CATALOG.indexOf(p) + ')">＋ Add</button>') + '</div>';
+      }).join('') + (q.trim() && !hits.length && !isBarcode(q) ? '<div class="muted" style="margin-top:6px">Not in the paint list. Tap ＋ Add to fill it in yourself.</div>' : '');
+    });
+  }
+
+  // The Add button / Enter: adds the paint you typed when it's clear which one, otherwise asks.
+  function quickAdd() {
+    var q = el('code').value.trim();
+    if (!q) return el('code').focus();
+    if (isBarcode(q)) return check(q);
+    Promise.all([catalogReady, fetchInv().catch(function () {})]).then(function () {
+      var hits = quickHits(q), exact = hits.filter(function (p) { return quickExact(p, q); });
+      var one = exact.length === 1 ? exact[0] : (hits.length === 1 ? hits[0] : null);
+      if (one) {
+        var have = ownedCopy(one.brand, (one.code ? one.code + ' ' : '') + one.name, one.range);
+        if (have) return quickList('✅ You already have this. Tap ＋1 if you bought another.');
+        return quickAddPaint(CATALOG.indexOf(one));
+      }
+      if (hits.length) return quickList('Which one? Tap ＋ Add next to it.');
+      addByHand();
+      el('fname').value = q;
+      el('fname').focus();
+      dupCheck();
+      autoType();
+    });
+  }
+
+  function quickDone(html) {
+    INV = null;
+    fetchInv().catch(function () {});
+    el('code').value = '';
+    el('quick').innerHTML = '';
+    show(html);
+    el('code').focus();
+  }
+
+  function quickAddPaint(i) {
+    var p = CATALOG[i];
+    if (!p) return;
+    var paint = { barcode: '', brand: p.brand, range: p.range, name: (p.code ? p.code + ' ' : '') + p.name, notes: '', type: inferType(p) };
+    el('quick').innerHTML = '<div class="muted">Adding ' + esc(p.name) + '…</div>';
+    google.script.run.withSuccessHandler(function () {
+      quickDone('<div class="card yes"><div class="big">✅ Added ' + esc(paint.name) + '</div>' +
+        '<div class="muted">' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + '. Type the next one.</div></div>');
+    }).withFailureHandler(fail).addPaint(paint);
+  }
+
+  function quickMore(row) {
+    var p = (INV || []).filter(function (x) { return x.row === row; })[0] || {};
+    google.script.run.withSuccessHandler(function (n) {
+      quickDone('<div class="card yes"><div class="big">✅ ' + esc(p.name || 'Paint') + ': you now have ' + esc(n) + '</div>' +
+        '<div class="muted">Type the next one.</div></div>');
+    }).withFailureHandler(fail).changeQty(row, 1);
   }
 
   // Opens an empty add form without scanning anything first.
