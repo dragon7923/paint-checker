@@ -61,7 +61,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "ad4b614ce4";
+    var VERSION = "b2e3f2ef63";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -259,9 +259,6 @@
     /* Colours, Match */
     .midpage { max-width: 760px; margin: 0 auto; padding: 20px 16px; }
     .ptitle { font-size: 24px; font-weight: 800; margin: 4px 0 4px; letter-spacing: -0.01em; }
-    .closebox { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: #12291b; border: 1px solid #22c55e55; color: #d1fae5; font-size: 14px; line-height: 1.55; }
-    .closebox b { color: #fff; }
-    .closebox .sw { display: inline-block; vertical-align: middle; margin-right: 4px; }
     #hq, #eqq { margin-top: 14px; width: 100%; padding: 13px 16px; font-size: 16px; }
     .base { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px; border-radius: var(--radius); background: var(--surface); }
     .base .bsw { width: 64px; height: 64px; border-radius: 12px; flex: none; border: 1px solid #0006; }
@@ -665,7 +662,6 @@
       '<div class="row">' + (code ? '<button type="button" onclick="linkCode(' + p.row + ')">✅ That\'s it. Remember this barcode</button>' : '') +
       '<button type="button" class="ghost" onclick="addOneMore(' + p.row + ')">＋1 to the one I have</button></div>';
     el('faddbtn').textContent = p ? 'Add it as a new entry anyway' : 'Add to my paints';
-    closeCheck(!p);
   }
 
   // Saves the scanned barcode on a paint you already have, so the next scan finds it straight away.
@@ -679,25 +675,6 @@
     }).withFailureHandler(fail).linkBarcode(row, code);
   }
 
-  // At the store: if you don't have this paint, say which of yours is the same colour.
-  function closeCheck(show) {
-    var box = el('closebox');
-    if (!box) return;
-    box.hidden = true;
-    if (!show || !INV || !el('fname').value.trim()) return;
-    var b = { brand: el('fbrand').value, range: el('frange').value, name: el('fname').value, qty: 0, type: el('ftype').value };
-    enrich(b);
-    if (!b.hex) return;
-    var close = closestOwned(b, 3).filter(function (x) { return x.d < 20; });
-    if (!close.length) return;
-    box.hidden = false;
-    box.innerHTML = '💡 <b>You have something ' + (close[0].d < 12 ? 'very close' : 'close') + ' at home:</b>' +
-      close.map(function (x) {
-        return '<div><span class="sw" style="background:' + x.p.hex + '"></span><b>' + esc(x.p.name) + '</b> ' +
-          esc([x.p.brand, x.p.range].filter(Boolean).join(' · ')) + ' · ' + eqBadge(x.d)[0].toLowerCase() + '</div>';
-      }).join('') +
-      '<div class="row"><button type="button" class="ghost" onclick="eqOpen(el(\'fbrand\').value, el(\'fname\').value, el(\'frange\').value)">🔁 See all equivalents</button></div>';
-  }
 
   function addOneMore(row) {
     var p = INV.filter(function (x) { return x.row === row; })[0];
@@ -1311,7 +1288,6 @@
       '<input type="text" id="fnotes" placeholder="Notes (optional)">' +
       '<input type="hidden" id="fcode" value="' + esc(res.code) + '">' +
       '<div class="dupwarn" id="dupwarn" hidden></div>' +
-      '<div class="closebox" id="closebox" hidden></div>' +
       '<div class="row"><button type="submit" id="faddbtn">Add to my paints</button>' +
         '<button type="button" class="ghost" onclick="addFormToWish(this)">🛒 Shopping list</button></div></form></div>');
     syncForm();
