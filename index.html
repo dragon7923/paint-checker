@@ -61,7 +61,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "ee3a872e0a";
+    var VERSION = "c298a166c3";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -1036,6 +1036,9 @@
 
   // ---------- In-app camera (so you don't have to leave the app to take photos) ----------
   var CAM = null;
+  // The camera screens live on the page itself, not inside the Scan tab, so they show from any tab.
+  document.body.appendChild(el('camov'));
+  document.body.appendChild(el('liveov'));
   async function openCam(target, multi, hint) {
     CAM = { target: target, multi: multi, hint: hint, files: [], stream: null };
     el('camhint').textContent = hint;
