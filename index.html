@@ -14,7 +14,7 @@
   <script>
   // Stands in for Google's google.script.run: each call goes to the Paint Checker script with your app code.
   (function () {
-    var API = "https://script.google.com/macros/s/AKfycbzWm70X4OfXXpqYEXr7qcL6rv2J4ajj1qYpLyNZchGIVeVOt1GYRkzg_-pL5Adpiic2/exec";
+    var API = "https://script.google.com/macros/s/AKfycbzU-nXcvfCQ1Ye8s9ZYPvv3jkWXwnyWE962bt5Y-Jou56Z5ezX-9G8Y8HhSvBLH_FDY/exec";
     function code() { try { return localStorage.getItem('pc-code') || ''; } catch (e) { return ''; } }
     function call(fn, args, ok, fail) {
       fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: code(), fn: fn, args: args }) })
