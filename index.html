@@ -59,6 +59,38 @@
     if (!code()) document.addEventListener('DOMContentLoaded', function () { askCode(); });
 
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
+
+    // An "Install app" button in the top bar, shown when the browser says the app can be installed.
+    var installEvt = null;
+    function installBtn() {
+      var b = document.getElementById('installbtn');
+      if (b || !document.querySelector('.top')) return b;
+      b = document.createElement('button');
+      b.id = 'installbtn';
+      b.textContent = '⬇ Install app';
+      b.style.cssText = 'padding:7px 12px;font-size:14px;border-radius:999px';
+      b.onclick = function () {
+        if (installEvt) { installEvt.prompt(); installEvt.userChoice.then(function () { installEvt = null; b.remove(); }); }
+        else if (/iphone|ipad/i.test(navigator.userAgent)) alertBox('On iPhone: tap the Share button, then "Add to Home Screen".');
+      };
+      document.querySelector('.top').appendChild(b);
+      return b;
+    }
+    function alertBox(msg) {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;left:16px;right:16px;bottom:90px;z-index:100;padding:14px;border-radius:14px;background:#23272f;color:#e9ebef;font-family:system-ui,sans-serif';
+      d.textContent = msg;
+      document.body.appendChild(d);
+      setTimeout(function () { d.remove(); }, 6000);
+    }
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      installEvt = e;
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installBtn); else installBtn();
+    });
+    window.addEventListener('appinstalled', function () { var b = document.getElementById('installbtn'); if (b) b.remove(); });
+    // iPhones never send the browser's install signal, so show the button there with the Share-menu tip.
+    if (/iphone|ipad/i.test(navigator.userAgent) && !navigator.standalone) document.addEventListener('DOMContentLoaded', installBtn);
   })();
   </script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
