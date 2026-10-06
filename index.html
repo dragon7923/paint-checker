@@ -60,6 +60,25 @@
 
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
+    // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
+    var VERSION = "ee3a872e0a";
+    function checkUpdate() {
+      fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
+        .then(function (v) {
+          v = v.trim();
+          if (!v || v === VERSION) return;
+          // Only try once per new version, in case the web host is still handing out the old page for a few minutes.
+          try { if (sessionStorage.getItem('pc-tried') === v) return; sessionStorage.setItem('pc-tried', v); } catch (e) {}
+          location.reload();
+        }, function () {});
+    }
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') checkUpdate(); });
+    window.addEventListener('load', checkUpdate);
+    document.addEventListener('DOMContentLoaded', function () {
+      var box = document.getElementById('brandbox');
+      if (box) box.insertAdjacentHTML('afterend', '<div class="muted" style="margin-top:18px;font-size:12px;text-align:center">App version ' + VERSION + '</div>');
+    });
+
     // An "Install app" button in the top bar, shown when the browser says the app can be installed.
     var installEvt = null;
     function installBtn() {
