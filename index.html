@@ -91,7 +91,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "f0add88d58";
+    var VERSION = "090793fc5f";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -329,6 +329,16 @@
     label.ghost { display: block; text-align: center; border: 1px solid var(--line); border-radius: 12px; font-weight: 600; cursor: pointer; }
     #pickwrap { margin-top: 12px; }
     #pcanvas { display: block; width: 100%; height: auto; border-radius: 12px; cursor: crosshair; touch-action: manipulation; }
+    .mixrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .mixrow input { flex: 1; min-width: 0; margin: 0; }
+    .mixrow .grow { flex: 1; min-width: 0; }
+    .mixrow .sw { width: 30px; height: 30px; flex: none; }
+    .mixrow button { padding: 6px 10px; }
+    .drops { display: flex; align-items: center; gap: 6px; }
+    .drops b { min-width: 22px; text-align: center; font-size: 18px; }
+    .drops .muted { font-size: 12px; margin-right: 2px; }
+    .mixresult { height: 110px; margin-top: 14px; border-radius: 16px; display: flex; align-items: flex-end; justify-content: flex-end; padding: 10px 14px; box-shadow: inset 0 0 0 1px #ffffff22; }
+    .mixresult span { background: #000a; color: #fff; padding: 3px 8px; border-radius: 8px; font-size: 13px; font-weight: 700; }
     .mixsw { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 700; }
     .mixsw .sw { width: 22px; height: 22px; }
 
@@ -416,6 +426,12 @@
     <label class="ghost addbtn">📷 Choose a photo<input type="file" id="pphoto" accept="image/*"></label>
     <div id="pickwrap" hidden><canvas id="pcanvas"></canvas><div class="muted" style="margin-top:6px">Tap the photo to pick a colour.</div></div>
     <div id="pout"></div>
+
+    <div class="ptitle" style="margin-top:34px">🧪 Mix by drops</div>
+    <div class="muted">Pick the paints you're mixing and how many drops of each. I'll show the colour you'll get and the paints closest to it.</div>
+    <div id="mixrows"></div>
+    <div class="row"><button type="button" class="ghost" onclick="mixAddRow()">＋ Add another paint</button></div>
+    <div id="mixout"></div>
 
     <div class="ptitle" style="margin-top:34px">Shades, highlights &amp; harmonies</div>
     <div class="muted">Pick a paint. I'll look through all your paints for the best recess shade, edge highlight and glaze, plus colours that go with it.</div>
@@ -1519,7 +1535,11 @@
     if (page === 'rec') openRecipes();
     if (page === 'inv') loadInv();
     if (page === 'eq') Promise.all([catalogReady, fetchInv()]).then(function () { if (!el('eqout').innerHTML) eqSearch(); }, function () {});
-    if (page === 'hl') { drawWheel(); fetchInv().then(function () { hlSearch(); drawWheel(); }, function () {}); }
+    if (page === 'hl') {
+      drawWheel();
+      if (!el('mixrows').innerHTML) mixRows();
+      fetchInv().then(function () { hlSearch(); drawWheel(); }, function () {});
+    }
     window.scrollTo(0, 0);
   }
 
@@ -2216,6 +2236,93 @@
           '<div class="why">' + ratioText(m) + '</div></div>' +
         '<span class="badge ' + b[1] + '">' + b[0] + '</span></div>';
     }).join('') + '<div class="muted" style="margin-top:6px">Mixes are an estimate. Try a little on your palette first.</div>';
+  }
+
+  // ---------- Mix by drops ----------
+  // Same paint-style mix as above, for any number of paints: weights are each paint's share of the drops.
+  function mixMany(parts) {
+    var total = parts.reduce(function (s, x) { return s + x.w; }, 0);
+    return '#' + [0, 1, 2].map(function (i) {
+      var lin = 0, geo = 0;
+      parts.forEach(function (x) { var c = Math.max(x.L[i], 0.002), w = x.w / total; lin += w * c; geo += w * Math.log(c); });
+      var v = 0.25 * lin + 0.75 * Math.exp(geo);
+      v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+      return ('0' + Math.max(0, Math.min(255, Math.round(v * 255))).toString(16)).slice(-2);
+    }).join('');
+  }
+
+  var MIX = [{ p: null, drops: 1 }, { p: null, drops: 1 }], MIXFIND = [];
+  function mixRows() {
+    el('mixrows').innerHTML = MIX.map(function (r, i) {
+      var remove = MIX.length > 2 ? '<button type="button" class="ghost" title="Remove" onclick="mixRemove(' + i + ')">✕</button>' : '';
+      if (!r.p) {
+        return '<div class="mixrow"><input type="search" placeholder="Paint ' + (i + 1) + ': e.g. Mephiston Red, 70.950" oninput="mixFind(' + i + ', this.value)">' +
+          remove + '</div><div id="mixfind' + i + '"></div>';
+      }
+      return '<div class="mixrow"><span class="sw" style="background:' + r.p.hex + '"></span>' +
+        '<span class="grow"><b>' + esc(r.p.name) + '</b><br><span class="muted">' + esc([r.p.brand, r.p.range].filter(Boolean).join(' · ')) + '</span></span>' +
+        '<span class="drops"><button type="button" class="ghost" onclick="mixDrops(' + i + ',-1)">−</button>' +
+        '<b>' + r.drops + '</b><span class="muted">' + (r.drops === 1 ? 'drop' : 'drops') + '</span>' +
+        '<button type="button" class="ghost" onclick="mixDrops(' + i + ',1)">+</button></span>' +
+        '<button type="button" class="ghost" title="Change paint" onclick="mixChange(' + i + ')">↺</button>' + remove + '</div>';
+    }).join('');
+    mixShow();
+  }
+  // Your paints first, then every other paint with a known colour.
+  function mixFind(i, q) {
+    var words = normName(q).split(' ').filter(Boolean), box = el('mixfind' + i);
+    if (!words.length) { box.innerHTML = ''; return; }
+    function hit(p) { var hay = normName([p.brand, p.range, p.code || '', p.name].join(' ')); return words.every(function (w) { return hay.indexOf(w) !== -1; }); }
+    var mine = (INV || []).filter(function (p) { return p.hex && hit(p); }).slice(0, 5)
+      .map(function (p) { return { brand: p.brand, range: p.range, name: p.name, hex: p.hex, mine: true }; });
+    var seen = {};
+    mine.forEach(function (p) { seen[sameKey(p)] = true; });
+    var others = CATALOG.filter(function (c) { return /^#[0-9a-f]{6}$/i.test(c.hex) && hit(c); })
+      .map(function (c) { return { brand: c.brand, range: c.range, name: (c.code ? c.code + ' ' : '') + c.name, hex: c.hex }; })
+      .filter(function (p) { var k = sameKey(p); return seen[k] ? false : (seen[k] = true); }).slice(0, 8 - mine.length);
+    MIXFIND = mine.concat(others);
+    box.innerHTML = MIXFIND.map(function (p, j) {
+      return '<button type="button" class="pick" onclick="mixPick(' + i + ',' + j + ')"><span class="sw" style="background:' + p.hex + '"></span>' +
+        '<span>' + esc(p.name) + ' <span class="muted">' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + '</span>' +
+        (p.mine ? ' <span class="owned">✅ yours</span>' : '') + '</span></button>';
+    }).join('') || '<div class="muted">No paint with a known colour matches that.</div>';
+  }
+  function mixPick(i, j) { MIX[i].p = MIXFIND[j]; mixRows(); }
+  function mixChange(i) { MIX[i].p = null; mixRows(); var f = el('mixrows').querySelectorAll('.mixrow')[i].querySelector('input'); if (f) f.focus(); }
+  function mixDrops(i, d) { MIX[i].drops = Math.max(1, Math.min(99, MIX[i].drops + d)); mixRows(); }
+  function mixAddRow() { MIX.push({ p: null, drops: 1 }); mixRows(); }
+  function mixRemove(i) { MIX.splice(i, 1); mixRows(); }
+
+  function mixShow() {
+    var used = MIX.filter(function (r) { return r.p; }), box = el('mixout');
+    if (used.length < 2) { box.innerHTML = used.length ? '<div class="muted" style="margin-top:8px">Pick at least one more paint.</div>' : ''; return; }
+    var total = used.reduce(function (s, r) { return s + r.drops; }, 0);
+    var hex = mixMany(used.map(function (r) { return { L: linRgb(r.p.hex), w: r.drops }; })), T = lab(hex);
+    function near(list) {
+      return list.map(function (p) { return { p: p, d: colourDiff(T, lab(p.hex)) }; }).sort(function (a, b) { return a.d - b.d; }).slice(0, 3);
+    }
+    var mine = near((INV || []).filter(function (p) { return p.hex && Number(p.qty) > 0 && !isCraft(p) && !p.fams.metal; }));
+    var seen = {};
+    (INV || []).forEach(function (p) { seen[sameKey(p)] = true; });
+    var buy = near(CATALOG.filter(function (c) { return /^#[0-9a-f]{6}$/i.test(c.hex) && !seen[sameKey(c)]; })
+      .map(function (c) { return { brand: c.brand, range: c.range, name: (c.code ? c.code + ' ' : '') + c.name, hex: c.hex }; }));
+    function rows(list) {
+      return list.map(function (x) {
+        var b = eqBadge(x.d);
+        return '<div class="hlrow"><div class="prev" style="background:linear-gradient(90deg,' + hex + ' 0 45%,' + x.p.hex + ' 45% 100%)" title="Your mix | this paint"></div>' +
+          '<div class="grow"><b>' + esc(x.p.name) + '</b><div class="why">' + esc([x.p.brand, x.p.range].filter(Boolean).join(' · ')) + '</div></div>' +
+          '<span class="badge ' + b[1] + '">' + b[0] + '</span></div>';
+      }).join('');
+    }
+    var tricky = used.some(function (r) { var p = asPaint(r.p); return (p.fams && p.fams.metal) || SEE_THROUGH.test(inferType(r.p)); });
+    box.innerHTML = '<div class="mixresult" style="background:' + hex + '"><span>' + hex.toUpperCase() + '</span></div>' +
+      '<div class="muted" style="margin:8px 0 4px">' + used.map(function (r) {
+        return r.drops + ' ' + (r.drops === 1 ? 'drop' : 'drops') + ' ' + esc(r.p.name) + ' (' + Math.round(100 * r.drops / total) + '%)';
+      }).join(' + ') + '</div>' +
+      (mine.length ? '<div class="sect">Your paints closest to this mix</div>' + rows(mine) : '') +
+      (buy.length ? '<div class="sect">Closest paints to buy</div>' + rows(buy) : '') +
+      '<div class="muted" style="margin-top:6px">The mix is an estimate. Try a little on your palette first.' +
+      (tricky ? ' Metallic, wash and Contrast-type paints don\'t mix like normal paint, so this one is rougher.' : '') + '</div>';
   }
 
   // ---------- Pick a colour from a photo ----------
