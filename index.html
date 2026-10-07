@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "6227f0939f";
+    var VERSION = "e3cae950dd";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -194,6 +194,10 @@
     .scanrow .scan { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 10px; font-size: 18px; }
     .scan .sub { font-size: 13px; font-weight: 400; opacity: .85; margin-top: 4px; }
     .scan.alt { background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+    .rpicks { max-height: 380px; overflow-y: auto; margin-top: 6px; }
+    .rpicks .qrow { cursor: pointer; }
+    .rpicks input[type=checkbox] { width: 22px; height: 22px; flex: none; margin: 0; }
+    #rangebox select { flex: 1; min-width: 0; }
     .typebox { margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
     .typetitle { font-size: 18px; font-weight: 800; margin-bottom: 10px; }
     #code { width: 100%; box-sizing: border-box; font-size: 20px; padding: 16px 18px; border-radius: 14px; }
@@ -479,6 +483,16 @@
     <input id="code" type="search" autocomplete="off" enterkeyhint="search" placeholder="Name or number: Mephiston, 70.950, 067" oninput="quickList()"
       onkeydown="if (event.key === 'Enter') { event.preventDefault(); quickAdd(); }">
     <div id="quick"></div>
+  </div>
+
+  <button type="button" class="ghost addbtn" onclick="rangeOpen()">📦 I own a whole range or set</button>
+  <div class="typebox" id="rangebox" hidden>
+    <div class="typetitle">📦 Add a whole range</div>
+    <div class="row" style="margin-top:0">
+      <select id="rbrand" onchange="rangeBrand()"></select>
+      <select id="rrange" onchange="rangeList()"></select>
+    </div>
+    <div id="rlist"></div>
   </div>
 
   <div id="out"></div>
@@ -1386,6 +1400,88 @@
       if (hits.length) return quickList('Which one? Tap ＋ Add next to it.');
       addOwn();
     });
+  }
+
+  // ---------- Add a whole range at once ----------
+  var RANGEPICK = [];
+  function rangeOpen() {
+    var box = el('rangebox');
+    box.hidden = !box.hidden;
+    if (box.hidden) return;
+    el('rlist').innerHTML = '<div class="muted">Loading the paint list…</div>';
+    Promise.all([catalogReady, fetchInv().catch(function () {})]).then(function () {
+      var brands = {};
+      CATALOG.forEach(function (c) { if (c.brand && c.range) brands[c.brand] = true; });
+      el('rbrand').innerHTML = '<option value="">Brand…</option>' + Object.keys(brands).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); })
+        .map(function (b) { return '<option value="' + esc(b) + '">' + esc(b) + '</option>'; }).join('');
+      el('rrange').innerHTML = '<option value="">Range…</option>';
+      el('rlist').innerHTML = '';
+    });
+  }
+  // One entry per paint in the brand + range (the same paint can come from more than one list).
+  function rangePaints(brand, range) {
+    var seen = {};
+    return CATALOG.filter(function (c) {
+      if (c.brand !== brand || c.range !== range) return false;
+      var k = looseName((c.code ? c.code + ' ' : '') + c.name);
+      return seen[k] ? false : (seen[k] = true);
+    });
+  }
+  function rangeBrand() {
+    var brand = el('rbrand').value, counts = {};
+    CATALOG.forEach(function (c) { if (c.brand === brand && c.range) counts[c.range] = true; });
+    el('rrange').innerHTML = '<option value="">Range…</option>' + Object.keys(counts).sort().map(function (r) {
+      return '<option value="' + esc(r) + '">' + esc(r) + ' (' + rangePaints(brand, r).length + ')</option>';
+    }).join('');
+    el('rlist').innerHTML = '';
+  }
+  function rangeList() {
+    var brand = el('rbrand').value, range = el('rrange').value;
+    if (!brand || !range) { el('rlist').innerHTML = ''; return; }
+    RANGEPICK = rangePaints(brand, range).map(function (c) {
+      return { c: c, have: ownedCopy(c.brand, (c.code ? c.code + ' ' : '') + c.name, c.range) };
+    }).sort(function (a, b) { return String(a.c.code || a.c.name).localeCompare(String(b.c.code || b.c.name), 'en', { numeric: true }); });
+    var owned = RANGEPICK.filter(function (x) { return x.have; }).length;
+    el('rlist').innerHTML = '<div class="muted" style="margin:10px 0 6px">' + RANGEPICK.length + ' paints' +
+        (owned ? ' · you already have ' + owned + ' (left unticked)' : '') + '. Untick any you don\'t have.</div>' +
+      '<div class="row" style="margin-top:0"><button type="button" class="ghost" onclick="rangeTick(true)">Tick all</button>' +
+        '<button type="button" class="ghost" onclick="rangeTick(false)">Untick all</button></div>' +
+      '<div class="rpicks">' + RANGEPICK.map(function (x, i) {
+        return '<label class="qrow"><input type="checkbox" id="rp' + i + '"' + (x.have ? '' : ' checked') + ' onchange="rangeCount()">' +
+          '<span class="sw" style="background:' + (x.c.hex || 'transparent') + '"></span>' +
+          '<span class="grow"><b>' + esc(x.c.name) + '</b> <span class="muted">' + esc(x.c.code || '') + '</span>' +
+          (x.have ? '<br><span class="owned">✅ You have ' + esc(x.have.qty) + '</span>' : '') + '</span></label>';
+      }).join('') + '</div>' +
+      '<div class="row"><button type="button" id="raddbtn" onclick="rangeAdd()"></button></div>';
+    rangeCount();
+  }
+  function rangeTick(on) {
+    RANGEPICK.forEach(function (x, i) { el('rp' + i).checked = on && !x.have; });
+    rangeCount();
+  }
+  function rangeChosen() { return RANGEPICK.filter(function (x, i) { return el('rp' + i) && el('rp' + i).checked; }); }
+  function rangeCount() {
+    var n = rangeChosen().length, b = el('raddbtn');
+    b.textContent = n ? '＋ Add ' + n + ' paint' + (n === 1 ? '' : 's') : 'Tick the paints to add';
+    b.disabled = !n;
+  }
+  function rangeAdd() {
+    var list = rangeChosen().map(function (x) {
+      var c = x.c;
+      return { barcode: '', brand: c.brand, range: c.range, name: (c.code ? c.code + ' ' : '') + c.name, notes: '', type: inferType(c) };
+    });
+    if (!list.length) return;
+    var b = el('raddbtn');
+    b.disabled = true;
+    b.textContent = 'Adding ' + list.length + ' paints…';
+    google.script.run.withSuccessHandler(function () {
+      INV = null;
+      fetchInv().catch(function () {});
+      el('rangebox').hidden = true;
+      show('<div class="card yes"><div class="big">✅ Added ' + list.length + ' paints</div>' +
+        '<div class="muted">' + esc(list[0].brand + ' · ' + list[0].range) + '</div>' +
+        '<div class="row"><button class="ghost" onclick="go(\'inv\')">🗂️ See my paints</button></div></div>');
+    }).withFailureHandler(function (e) { rangeCount(); fail(e); }).addPaints(list);
   }
 
   // The full add form, with what you typed as the paint name.
