@@ -79,7 +79,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "4ced12ed44";
+    var VERSION = "ad25f18133";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -177,10 +177,15 @@
     .scan { display: block; text-align: center; background: var(--accent); color: #fff; padding: 22px; border-radius: 16px; font-size: 20px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px #4f8cff33; }
     input[type=file] { display: none; }
     .addbtn { width: 100%; margin-top: 12px; padding: 14px; font-size: 16px; }
-    .addrow { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
-    .quickrow { margin-top: 12px; }
-    .quickrow input { min-width: 0; }
-    .quickrow button { padding-left: 14px; padding-right: 14px; white-space: nowrap; }
+    .scanrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .scanrow .scan { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 10px; font-size: 18px; }
+    .scan .sub { font-size: 13px; font-weight: 400; opacity: .85; margin-top: 4px; }
+    .scan.alt { background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+    .typebox { margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+    .typetitle { font-size: 18px; font-weight: 800; margin-bottom: 10px; }
+    #code { width: 100%; box-sizing: border-box; font-size: 20px; padding: 16px 18px; border-radius: 14px; }
+    #quick:empty { display: none; }
+    #quick { margin-top: 6px; }
     .qrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
     .qrow .grow { flex: 1; min-width: 0; }
     .qrow button { padding: 8px 12px; white-space: nowrap; }
@@ -431,22 +436,20 @@
   </section>
 
   <section id="scan" class="narrow" hidden>
-  <label class="scan">📷 Scan a paint
-    <input id="photo" type="file" accept="image/*" capture="environment">
-  </label>
-
-  <div class="row quickrow">
-    <input id="code" type="text" autocomplete="off" placeholder="Type a paint: Mephiston, 70.950, MPA-013" oninput="quickList()"
-      onkeydown="if (event.key === 'Enter') { event.preventDefault(); quickAdd(); }">
-    <button type="button" class="ghost" onclick="check(el('code').value)">Check</button>
-    <button type="button" onclick="quickAdd()">＋ Add</button>
-  </div>
-  <div id="quick"></div>
-
-  <div class="addrow" id="addmenu">
-    <label class="ghost addbig">📸 From photos<span class="muted">Several paints at once</span>
+  <div class="scanrow">
+    <label class="scan">📷 Scan a barcode<span class="sub">Point the camera at the bottle</span>
+      <input id="photo" type="file" accept="image/*" capture="environment">
+    </label>
+    <label class="scan alt">📸 Take photos<span class="sub">Reads the labels, one paint or many</span>
       <input id="photos" type="file" accept="image/*" multiple>
     </label>
+  </div>
+
+  <div class="typebox">
+    <div class="typetitle">✍️ Or type a paint</div>
+    <input id="code" type="search" autocomplete="off" enterkeyhint="search" placeholder="Name or number: Mephiston, 70.950, 067" oninput="quickList()"
+      onkeydown="if (event.key === 'Enter') { event.preventDefault(); quickAdd(); }">
+    <div id="quick"></div>
   </div>
 
   <div id="out"></div>
@@ -504,6 +507,7 @@
       .then(function (t) { parseList(l[0], t); })
       .catch(function () { /* list unavailable: Pro Acryl still works */ });
   }).concat(proColours())).then(function () { BUILT_IN = CATALOG.length; return loadMine(); });
+  catalogReady.then(function () { knownBarcode(''); }); // download the barcode list early, so the first scan is quick
 
   // Real colours for Pro Acryl paints, matched by bottle number, where the community list has them.
   function proColours() {
@@ -619,10 +623,15 @@
       return !!c && (c === w || c.replace(/^([a-z]*)0+(?=\d)/, '$1') === w.replace(/^0+(?=\d)/, ''));
     }
     function exact(p) { return words.some(function (w) { return isCode(p, w); }); }
+    // How many typed words start a word of the paint's name ("bold" -> Bold Pyrrole Red before Kobold Red).
+    function starts(p) {
+      var parts = (p.code + ' ' + p.name).toLowerCase().split(/[\s\-']+/);
+      return words.filter(function (w) { return parts.some(function (x) { return x.indexOf(w) === 0; }); }).length;
+    }
     return CATALOG.filter(function (p) {
       var hay = (p.brand + ' ' + p.range + ' ' + p.code + ' ' + p.name).toLowerCase();
       return words.every(function (w) { return hay.indexOf(w) !== -1 || isCode(p, w); });
-    }).sort(function (a, b) { return (exact(b) - exact(a)) || (a.name.length - b.name.length); }).slice(0, 10);
+    }).sort(function (a, b) { return (exact(b) - exact(a)) || (starts(b) - starts(a)) || (a.name.length - b.name.length); }).slice(0, 10);
   }
 
   function pickButtons(list) {
@@ -1188,13 +1197,19 @@
     // Typed text that isn't a barcode number (e.g. "MPA-013", "S21", "70.950", "mephiston") is a code/name search.
     if (!file && !/^\d{6,14}$/.test(code.replace(/[\s-]/g, ''))) return codeSearch(code);
     show('<div class="card">Checking…</div>');
-    google.script.run.withSuccessHandler(function (res) {
-      if (res.found) return render(res);
-      knownBarcode(code).then(function (hit) {
-        if (!hit) return render(res);
-        return Promise.all([fetchInv(), catalogReady]).then(function () { showKnown(code, hit, res); });
-      }).catch(function () { render(res); });
-    }).withFailureHandler(fail).lookup(code);
+    // Fast path, on the phone itself: your paints' saved barcodes, then the built-in paint barcode list.
+    // Only a barcode neither knows goes to your Google script (which also asks the online barcode databases).
+    var d = digitsOf(code);
+    Promise.all([fetchInv().catch(function () { return null; }), knownBarcode(code), catalogReady]).then(function (r) {
+      var mine = (INV || []).filter(function (p) {
+        return String(p.barcode || '').split(/[,;\/ ]+/).some(function (c) { return digitsOf(c) === d; });
+      })[0];
+      if (mine) return render({ found: true, paint: mine });
+      if (r[1]) return showKnown(code, r[1], { found: false, code: code });
+      google.script.run.withSuccessHandler(render).withFailureHandler(fail).lookup(code);
+    }).catch(function () {
+      google.script.run.withSuccessHandler(render).withFailureHandler(fail).lookup(code);
+    });
   }
 
   // ---------- The built-in paint barcode list (barcodes.json, from the WarHub paint catalog) ----------
@@ -1225,8 +1240,9 @@
   function showKnown(code, hit, res) {
     var mine = ownedForHit(hit);
     if (mine) {
-      // Remember it on your paint too, so it's found straight from your sheet next time.
-      google.script.run.withSuccessHandler(function () { INV = null; }).withFailureHandler(function () {}).linkBarcode(mine.row, code);
+      // Remember it on your paint too (in the background), so it's found straight from your sheet next time.
+      google.script.run.withSuccessHandler(function (r) { if (r && r.paint) mine.barcode = r.paint.barcode; })
+        .withFailureHandler(function () {}).linkBarcode(mine.row, code);
       return render({ found: true, paint: mine });
     }
     // Not yours: fill in the add form, using the app's own paint list entry (its range names and colour) when there is one.
@@ -1309,7 +1325,10 @@
           (have ? '<br><span class="owned">✅ You have ' + esc(have.qty) + '</span>' : '') + '</span>' +
           (have ? '<button type="button" class="ghost" onclick="quickMore(' + have.row + ')">＋1</button>'
             : '<button type="button" onclick="quickAddPaint(' + CATALOG.indexOf(p) + ')">＋ Add</button>') + '</div>';
-      }).join('') + (q.trim() && !hits.length && !isBarcode(q) ? '<div class="muted" style="margin-top:6px">Not in the paint list. Tap ＋ Add to fill it in yourself.</div>' : '');
+      }).join('') + (!q.trim() ? ''
+        : isBarcode(q) ? '<div class="row"><button type="button" onclick="check(el(\'code\').value)">🔎 Check barcode ' + esc(q.trim()) + '</button></div>'
+        : '<div class="row"><button type="button" class="ghost" onclick="addOwn()">✍️ ' +
+            (hits.length ? 'Not listed? Add it yourself' : 'Not in the paint list. Add “' + esc(q.trim()) + '” yourself') + '</button></div>');
     });
   }
 
@@ -1327,12 +1346,18 @@
         return quickAddPaint(CATALOG.indexOf(one));
       }
       if (hits.length) return quickList('Which one? Tap ＋ Add next to it.');
-      addByHand();
-      el('fname').value = q;
-      el('fname').focus();
-      dupCheck();
-      autoType();
+      addOwn();
     });
+  }
+
+  // The full add form, with what you typed as the paint name.
+  function addOwn() {
+    var q = el('code').value.trim();
+    addByHand();
+    el('fname').value = q;
+    el('fname').focus();
+    dupCheck();
+    autoType();
   }
 
   function quickDone(html) {
@@ -1422,7 +1447,7 @@
     fetchInv().then(function () { dupCheck(); if (res.code) ownPick(res.code); }, function () {});
 
     if (res.label) return showLabel(res.label, !g.title, res.labelHint);
-    if (lastFile) {
+    if (lastFile && !res.known) {
       var file = lastFile;
       el('labelhint').textContent = '📷 Reading the label…';
       labelMatches(file).then(function (hits) {
