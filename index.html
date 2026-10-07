@@ -79,7 +79,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "b9883c2786";
+    var VERSION = "a30f462676";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -1188,7 +1188,53 @@
     // Typed text that isn't a barcode number (e.g. "MPA-013", "S21", "70.950", "mephiston") is a code/name search.
     if (!file && !/^\d{6,14}$/.test(code.replace(/[\s-]/g, ''))) return codeSearch(code);
     show('<div class="card">Checking…</div>');
-    google.script.run.withSuccessHandler(render).withFailureHandler(fail).lookup(code);
+    google.script.run.withSuccessHandler(function (res) {
+      if (res.found) return render(res);
+      knownBarcode(code).then(function (hit) {
+        if (!hit) return render(res);
+        return Promise.all([fetchInv(), catalogReady]).then(function () { showKnown(code, hit, res); });
+      }).catch(function () { render(res); });
+    }).withFailureHandler(fail).lookup(code);
+  }
+
+  // ---------- The built-in paint barcode list (barcodes.json, from the WarHub paint catalog) ----------
+  var BARCODES = null;
+  function knownBarcode(code) {
+    if (!BARCODES) BARCODES = fetch('barcodes.json').then(function (r) { return r.ok ? r.json() : { codes: {} }; })
+      .catch(function () { BARCODES = null; return { codes: {} }; });
+    var d = String(code).replace(/\D/g, '').replace(/^0+/, '');
+    return BARCODES.then(function (db) { return (db.codes || {})[d] || null; });
+  }
+  // Your paint with the same brand and name (and range, when that's needed to tell them apart).
+  function ownedForHit(hit) {
+    var name = looseName(stripCode(hit[2]));
+    var list = (INV || []).filter(function (p) { return p.brand && sameBrand(p.brand, hit[0]) && looseName(stripCode(p.name)) === name; });
+    if (list.length > 1 && hit[1]) {
+      var r = normName(hit[1]);
+      var best = list.filter(function (p) { var pr = normName(p.range); return pr && (r.indexOf(pr) !== -1 || pr.indexOf(r) !== -1); });
+      if (best.length) list = best;
+    }
+    return list[0] || null;
+  }
+  function showKnown(code, hit, res) {
+    var mine = ownedForHit(hit);
+    if (mine) {
+      // Remember it on your paint too, so it's found straight from your sheet next time.
+      google.script.run.withSuccessHandler(function () { INV = null; }).withFailureHandler(function () {}).linkBarcode(mine.row, code);
+      return render({ found: true, paint: mine });
+    }
+    // Not yours: fill in the add form, using the app's own paint list entry (its range names and colour) when there is one.
+    var name = looseName(stripCode(hit[2]));
+    var cat = CATALOG.filter(function (c) { return sameBrand(c.brand, hit[0]) && c.brand && looseName(c.name) === name; });
+    if (cat.length > 1 && hit[1]) {
+      var r = normName(hit[1]);
+      var best = cat.filter(function (c) { var cr = normName(c.range); return cr && (r.indexOf(cr) !== -1 || cr.indexOf(r) !== -1); });
+      if (best.length) cat = best;
+    }
+    var c = cat[0];
+    render({ found: false, code: code, known: [hit[0], hit[1], hit[2]].filter(Boolean).join(' · '),
+      guess: c ? { brand: c.brand, range: c.range, name: (c.code ? c.code + ' ' : '') + c.name }
+               : { brand: hit[0], range: hit[1], name: hit[2] } });
   }
 
   // Your paints matching a typed code or name. "MPA-013" / "MPA013" = Pro Acryl 013; leading zeros don't matter.
@@ -1335,13 +1381,15 @@
     var g = res.guess || {};
     show((res.manual ? '<div class="card"><div class="big">✍️ Add a paint</div>' +
         '<div class="muted">Pick it from the paint list, or fill in the boxes yourself. Not listed? Choose “Add my own” under Brand or Range.</div>'
+      : res.known ? '<div class="card no"><div class="big">❌ Not in your collection</div>' +
+        '<div class="muted">This is <b>' + esc(res.known) + '</b>. Bought it? Add it:</div>'
       : res.code ? '<div class="card"><div class="big">🔎 New barcode: which paint is it?</div>' +
         '<div class="muted">I haven\'t seen barcode ' + esc(res.code) + ' before. If it\'s one of your paints, tap it below ' +
         'and next time it\'s instant. If you don\'t have it, add it at the bottom.</div>'
       : '<div class="card no"><div class="big">❌ Not in your collection</div>' +
         '<div class="muted">Bought it? Add it:</div>') +
       (g.title ? '<div class="hint">✨ Filled in from the barcode database: “' + esc(g.title) + '” — check it before saving.</div>' : '') +
-      (res.code ? '<div id="ownpick"></div>' : '') +
+      (res.code && !res.known ? '<div id="ownpick"></div>' : '') +
       '<div class="hint" id="labelhint"></div>' +
       '<div id="labelpicks"></div>' +
       '<div class="hint">Or find it in the paint list:</div>' +
