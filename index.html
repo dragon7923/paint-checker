@@ -20,16 +20,28 @@
     function code() { return store('pc-code'); }
     function api() { return store('pc-api') || (code() ? FIRST_API : ''); }
     var LINK_RE = /^https:\/\/script\.google\.com\/(a\/[^\/]+\/)?macros\/s\/[\w-]+\/exec$/;
-    function call(fn, args, ok, fail) {
+    // Google sometimes doesn't answer (or answers with an error page). Reading is safe to try again, so it does;
+    // saving isn't (it could add a paint twice), so it says it didn't save instead.
+    var READS = /^(list|get|lookup|search)/, WAITS = [800, 2000, 4000];
+    function call(fn, args, ok, fail, attempt) {
+      attempt = attempt || 0;
       if (!api()) { askCode(); return; }
+      function giveUp() {
+        if (READS.test(fn) && attempt < WAITS.length && navigator.onLine) {
+          setTimeout(function () { call(fn, args, ok, fail, attempt + 1); }, WAITS[attempt]);
+          return;
+        }
+        if (fail) fail(new Error(!navigator.onLine ? 'You are offline.'
+          : READS.test(fn) ? 'Could not reach your paint list. Google didn\'t answer; try again in a moment.'
+          : 'That didn\'t save: Google didn\'t answer. Check your paints, then try again.'));
+      }
       fetch(api(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: code(), fn: fn, args: args }) })
         .then(function (r) { return r.json(); })
         .then(function (res) {
           if (res.ok) { if (ok) ok(res.result); return; }
           if (/secret code/i.test(res.error)) askCode('That app code didn\'t work. Check it and try again.');
           if (fail) fail(new Error(res.error));
-        })
-        .catch(function (e) { if (fail) fail(new Error(navigator.onLine ? 'Could not reach your paint list. Try again in a moment.' : 'You are offline.')); });
+        }, giveUp); // only a failed request or a non-JSON answer from Google counts, not a problem in the page itself
     }
     function runner(ok, fail) {
       return new Proxy({}, { get: function (t, name) {
@@ -79,7 +91,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "ad25f18133";
+    var VERSION = "a70ac09332";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {

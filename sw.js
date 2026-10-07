@@ -1,6 +1,6 @@
 // Offline helper: keeps the app and the paint lists on the device so it opens fast.
 // Your own data always comes fresh from your Google Sheet (those requests are never cached).
-const CACHE = 'paint-checker-ad25f18133';
+const CACHE = 'paint-checker-a70ac09332';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
