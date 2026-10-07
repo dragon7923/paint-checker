@@ -91,7 +91,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "a70ac09332";
+    var VERSION = "f0add88d58";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -518,7 +518,16 @@
       .then(function (r) { return r.text(); })
       .then(function (t) { parseList(l[0], t); })
       .catch(function () { /* list unavailable: Pro Acryl still works */ });
-  }).concat(proColours())).then(function () { BUILT_IN = CATALOG.length; return loadMine(); });
+  }).concat(proColours(), extraPaints())).then(function () { BUILT_IN = CATALOG.length; return loadMine(); });
+
+  // Brands the community list doesn't have (Kaleido Colorworks…), built into the app as extra-paints.json.
+  function extraPaints() {
+    return fetch('extra-paints.json').then(function (r) { return r.ok ? r.json() : { paints: [] }; })
+      .then(function (d) {
+        (d.paints || []).forEach(function (p) { CATALOG.push({ brand: p.brand, code: p.code || '', range: p.range || '', name: p.name, hex: p.hex || '' }); });
+      })
+      .catch(function () { /* not available (e.g. on the Google page): the other lists still work */ });
+  }
   catalogReady.then(function () { knownBarcode(''); }); // download the barcode list early, so the first scan is quick
 
   // Real colours for Pro Acryl paints, matched by bottle number, where the community list has them.
