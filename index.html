@@ -14,10 +14,15 @@
   <script>
   // Stands in for Google's google.script.run: each call goes to the Paint Checker script with your app code.
   (function () {
-    var API = "https://script.google.com/macros/s/AKfycbzU-nXcvfCQ1Ye8s9ZYPvv3jkWXwnyWE962bt5Y-Jou56Z5ezX-9G8Y8HhSvBLH_FDY/exec";
-    function code() { try { return localStorage.getItem('pc-code') || ''; } catch (e) { return ''; } }
+    // Each person's own sheet has its own connection link. Devices set up before links existed keep the original one.
+    var FIRST_API = "https://script.google.com/macros/s/AKfycbzU-nXcvfCQ1Ye8s9ZYPvv3jkWXwnyWE962bt5Y-Jou56Z5ezX-9G8Y8HhSvBLH_FDY/exec";
+    function store(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+    function code() { return store('pc-code'); }
+    function api() { return store('pc-api') || (code() ? FIRST_API : ''); }
+    var LINK_RE = /^https:\/\/script\.google\.com\/(a\/[^\/]+\/)?macros\/s\/[\w-]+\/exec$/;
     function call(fn, args, ok, fail) {
-      fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: code(), fn: fn, args: args }) })
+      if (!api()) { askCode(); return; }
+      fetch(api(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: code(), fn: fn, args: args }) })
         .then(function (r) { return r.json(); })
         .then(function (res) {
           if (res.ok) { if (ok) ok(res.result); return; }
@@ -37,31 +42,44 @@
       var p = {}; new URLSearchParams(location.search).forEach(function (v, k) { p[k] = v; }); cb({ parameter: p });
     } } } };
 
-    // First time on this device (or a wrong code): ask for the app code.
+    // First time on this device (or a wrong code): ask for the connection link and app code of your own sheet.
     function askCode(msg) {
       if (document.getElementById('codebox')) return;
       var box = document.createElement('div');
       box.id = 'codebox';
-      box.style.cssText = 'position:fixed;inset:0;z-index:100;background:#111317;display:flex;align-items:center;justify-content:center;padding:24px';
-      box.innerHTML = '<div style="max-width:380px;width:100%;font-family:system-ui,sans-serif;color:#e9ebef">' +
+      box.style.cssText = 'position:fixed;inset:0;z-index:100;background:#111317;display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto';
+      var field = 'width:100%;padding:14px;border-radius:12px;border:1px solid #2b3039;background:#1a1d23;color:#e9ebef;font-size:17px;margin-top:6px';
+      var label = 'display:block;margin-top:14px;font-weight:700';
+      box.innerHTML = '<div style="max-width:420px;width:100%;font-family:system-ui,sans-serif;color:#e9ebef">' +
         '<div style="font-size:24px;font-weight:800">🎨 Paint Checker</div>' +
-        '<div style="color:#8e95a2;margin:8px 0 16px">' + (msg || 'Enter your app code to connect this device to your paint list. You only need to do this once.') + '</div>' +
-        '<input id="codein" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="App code" style="width:100%;padding:14px;border-radius:12px;border:1px solid #2b3039;background:#1a1d23;color:#e9ebef;font-size:17px">' +
-        '<button id="codego" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:#4f8cff;color:#fff;font-size:17px;font-weight:700">Connect</button></div>';
+        '<div style="color:#8e95a2;margin:8px 0 4px">' + (msg || 'Connect this device to your own paint sheet. You only need to do this once per phone or computer.') + '</div>' +
+        '<label style="' + label + '">Connection link<input id="apiin" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec" style="' + field + '"></label>' +
+        '<label style="' + label + '">App code<input id="codein" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="App code" style="' + field + '"></label>' +
+        '<div id="codeerr" style="color:#ff8a8a;margin-top:10px"></div>' +
+        '<button id="codego" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:#4f8cff;color:#fff;font-size:17px;font-weight:700">Connect</button>' +
+        '<div style="color:#8e95a2;margin-top:14px;font-size:14px">Both come from your copy of the Paint Checker sheet: menu <b>🎨 Paint Checker → Show my connection details</b>.</div></div>';
       document.body.appendChild(box);
+      document.getElementById('apiin').value = api();
       document.getElementById('codego').onclick = function () {
-        var v = document.getElementById('codein').value.trim();
-        if (!v) return;
-        try { localStorage.setItem('pc-code', v); } catch (e) {}
+        var link = document.getElementById('apiin').value.trim(), v = document.getElementById('codein').value.trim();
+        var err = document.getElementById('codeerr');
+        if (!LINK_RE.test(link)) { err.textContent = 'The connection link should start with https://script.google.com/macros/s/ and end with /exec.'; return; }
+        if (!v) { err.textContent = 'Type your app code too.'; return; }
+        try { localStorage.setItem('pc-api', link); localStorage.setItem('pc-code', v); } catch (e) {}
         location.reload();
       };
     }
-    if (!code()) document.addEventListener('DOMContentLoaded', function () { askCode(); });
+    window.pcSwitchSheet = function () {
+      if (!confirm('Connect this device to a different paint sheet? (Your paints stay safe in your sheet.)')) return;
+      try { localStorage.removeItem('pc-api'); localStorage.removeItem('pc-code'); } catch (e) {}
+      location.reload();
+    };
+    if (!code() || !api()) document.addEventListener('DOMContentLoaded', function () { askCode(); });
 
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "b2e3f2ef63";
+    var VERSION = "b3dffa4722";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -94,7 +112,8 @@
     document.addEventListener('DOMContentLoaded', function () {
       var box = document.getElementById('brandbox');
       var tag = '<div class="muted" style="margin-top:18px;font-size:12px;text-align:center">App version ' + VERSION + '</div>';
-      if (box) box.insertAdjacentHTML('afterend', tag);
+      if (box) box.insertAdjacentHTML('afterend', tag.replace('</div>',
+        ' · <a href="#" onclick="pcSwitchSheet(); return false" style="color:inherit">Connect a different sheet</a></div>'));
       var pout = document.getElementById('pout');
       if (pout) pout.insertAdjacentHTML('afterend', tag);
     });
@@ -192,7 +211,7 @@
     .owned { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 999px; background: #ef444426; color: #fca5a5; font-size: 12px; font-weight: 700; }
     .hit { padding: 10px 0; border-bottom: 1px solid var(--line); }
     #reader { display: none; }
-    #liveov, #camov { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 16px; }
+    #liveov, #camov { position: fixed; inset: 0; z-index: 80; background: #000; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 16px; }
     #liveov[hidden], #camov[hidden] { display: none; }
     #camvid { width: 100%; max-width: 560px; max-height: 62vh; margin: 0 auto; object-fit: cover; border-radius: 14px; display: block; background: #111; transition: opacity .15s; }
     .camthumbs { display: flex; justify-content: center; gap: 6px; min-height: 48px; overflow-x: auto; }
@@ -995,8 +1014,10 @@
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext &&
       !/script\.google|googleusercontent/.test(location.hostname);
   }
-  function liveStart() {
+  // onCode: optional; gets the barcode instead of the usual "do I have it?" check (used to save a paint's barcode).
+  function liveStart(onCode) {
     el('liveov').hidden = false;
+    el('liveov').querySelector('[onclick="liveToPhoto()"]').hidden = !!onCode;
     LIVE = new Html5Qrcode('live', { formatsToSupport: bcFormats(), verbose: false,
       experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
     LIVE.start({ facingMode: 'environment' },
@@ -1004,6 +1025,11 @@
       async function (code) {
         if (!LIVE || LIVE.done) return; // already handled this scan
         LIVE.done = true;
+        if (onCode) {
+          liveStop();
+          if (navigator.vibrate) navigator.vibrate(60);
+          return onCode(code);
+        }
         // Keep a still of the label, so a barcode the app doesn't know yet can still be read by its name.
         var still = null, v = document.querySelector('#live video');
         try {
@@ -1018,7 +1044,11 @@
         el('code').value = code;
         check(code, still);
       }, function () { /* no code in this frame yet */ })
-      .catch(function () { liveStop(); el('photo').click(); });
+      .catch(function () {
+        liveStop();
+        if (onCode) onCode(null);
+        else el('photo').click();
+      });
   }
   function liveStop() {
     el('liveov').hidden = true;
@@ -2098,13 +2128,36 @@
       '<b id="dq' + row + '">' + esc(p.qty) + '</b><button class="ghost" onclick="invQty(' + row + ',1)">+</button>' +
       '<span class="muted">bottles</span></div>' +
       '<select title="Paint type" onchange="setPaintType(' + row + ', this.value)">' + typeOptions(p.type) + '</select></div>' +
-      wishBtn(p, 'Running low', '🛒 Running low');
+      wishBtn(p, 'Running low', '🛒 Running low') +
+      '<div class="row"><button type="button" class="ghost" onclick="scanFor(' + row + ')">📷 ' +
+        (String(p.barcode || '').replace(/\D/g, '').length >= 6 ? 'Barcode saved ✓ · scan another bottle' : 'Scan its barcode') + '</button></div>' +
+      '<div class="hint" id="dmsg"></div>';
     box.innerHTML = '<div class="inner"><div class="row" style="margin-top:0"><button class="ghost" onclick="closeDetail()">← Back</button></div>' +
       colourHelpHtml(p, manage) + '</div>';
     box.hidden = false;
     box.scrollTop = 0;
     document.body.style.overflow = 'hidden';
   }
+  // Scan a bottle's barcode and save it on this paint, so scanning it later finds it straight away.
+  function scanFor(row) {
+    if (!liveOk()) { el('dmsg').textContent = 'Barcode scanning needs the installed app (or Chrome), not the Google page.'; return; }
+    liveStart(function (code) {
+      if (!code) { el('dmsg').textContent = 'The camera didn\'t start. Allow the camera for this app and try again.'; return; }
+      var digits = String(code).replace(/\D/g, '').replace(/^0+/, '');
+      var other = (INV || []).filter(function (x) {
+        return x.row !== row && String(x.barcode || '').split(/[,;\/ ]+/).some(function (c) { return c.replace(/\D/g, '').replace(/^0+/, '') === digits; });
+      })[0];
+      if (other) { el('dmsg').textContent = '⚠️ That barcode is already saved on ' + other.name + ' (' + other.brand + ').'; return; }
+      el('dmsg').textContent = 'Saving barcode ' + code + '…';
+      google.script.run.withSuccessHandler(function (res) {
+        var p = (INV || []).filter(function (x) { return x.row === row; })[0];
+        if (p) p.barcode = res.paint.barcode;
+        paintDetail(row);
+        el('dmsg').textContent = '🔗 Barcode saved. Scanning this bottle now finds it straight away.';
+      }).withFailureHandler(function (e) { el('dmsg').textContent = 'Error: ' + (e && e.message || e); }).linkBarcode(row, code);
+    });
+  }
+
   function closeDetail() {
     if (el('pdetail')) el('pdetail').hidden = true;
     document.body.style.overflow = '';
