@@ -79,7 +79,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "a30f462676";
+    var VERSION = "4ced12ed44";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -1205,8 +1205,14 @@
     var d = String(code).replace(/\D/g, '').replace(/^0+/, '');
     return BARCODES.then(function (db) { return (db.codes || {})[d] || null; });
   }
-  // Your paint with the same brand and name (and range, when that's needed to tell them apart).
+  // Your paint with the same paint number ("067", "S37", "70.950"), or else the same brand and name
+  // (and range, when that's needed to tell them apart).
+  function sameNumber(p, hit) {
+    return !!hit[3] && !!p.brand && sameBrand(p.brand, hit[0]) && codeKey(String(p.name).trim().split(/\s+/)[0]) === codeKey(hit[3]);
+  }
   function ownedForHit(hit) {
+    var byNumber = (INV || []).filter(function (p) { return sameNumber(p, hit); });
+    if (byNumber.length) return byNumber[0];
     var name = looseName(stripCode(hit[2]));
     var list = (INV || []).filter(function (p) { return p.brand && sameBrand(p.brand, hit[0]) && looseName(stripCode(p.name)) === name; });
     if (list.length > 1 && hit[1]) {
@@ -1225,7 +1231,8 @@
     }
     // Not yours: fill in the add form, using the app's own paint list entry (its range names and colour) when there is one.
     var name = looseName(stripCode(hit[2]));
-    var cat = CATALOG.filter(function (c) { return sameBrand(c.brand, hit[0]) && c.brand && looseName(c.name) === name; });
+    var cat = CATALOG.filter(function (c) { return c.brand && sameBrand(c.brand, hit[0]) && !!hit[3] && !!c.code && codeKey(c.code) === codeKey(hit[3]); });
+    if (!cat.length) cat = CATALOG.filter(function (c) { return sameBrand(c.brand, hit[0]) && c.brand && looseName(c.name) === name; });
     if (cat.length > 1 && hit[1]) {
       var r = normName(hit[1]);
       var best = cat.filter(function (c) { var cr = normName(c.range); return cr && (r.indexOf(cr) !== -1 || cr.indexOf(r) !== -1); });
