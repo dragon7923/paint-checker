@@ -69,7 +69,8 @@
         '<label style="' + label + '">App code<input id="codein" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="App code" style="' + field + '"></label>' +
         '<div id="codeerr" style="color:#ff8a8a;margin-top:10px"></div>' +
         '<button id="codego" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:#4f8cff;color:#fff;font-size:17px;font-weight:700">Connect</button>' +
-        '<div style="color:#8e95a2;margin-top:14px;font-size:14px">Both come from your copy of the Paint Checker sheet: menu <b>🎨 Paint Checker → Show my connection details</b>.</div></div>';
+        '<div style="color:#8e95a2;margin-top:14px;font-size:14px">In your copy of the Paint Checker sheet: the <b>connection link</b> is the <b>Web app URL</b> under ' +
+        '<b>Extensions → Apps Script → Deploy → Manage deployments</b>, and the <b>app code</b> is in <b>🎨 Paint Checker → Show my connection details</b>.</div></div>';
       document.body.appendChild(box);
       document.getElementById('apiin').value = api();
       document.getElementById('codego').onclick = function () {
@@ -91,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "090793fc5f";
+    var VERSION = "6227f0939f";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
