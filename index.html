@@ -79,7 +79,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "b3dffa4722";
+    var VERSION = "b9883c2786";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -681,6 +681,46 @@
       '<div class="row">' + (code ? '<button type="button" onclick="linkCode(' + p.row + ')">✅ That\'s it. Remember this barcode</button>' : '') +
       '<button type="button" class="ghost" onclick="addOneMore(' + p.row + ')">＋1 to the one I have</button></div>';
     el('faddbtn').textContent = p ? 'Add it as a new entry anyway' : 'Add to my paints';
+  }
+
+  // ---------- "Is it one of yours?" for a new barcode ----------
+  // A barcode's first digits say which company made it. Known ones, plus whatever your own saved barcodes teach it.
+  var CODE_BRANDS = { '5011921': 'Citadel', '5713799': 'The Army Painter', '8429551': 'Vallejo', '628504': 'Pro Acryl', '8435568': 'AK Interactive' };
+  function digitsOf(c) { return String(c || '').replace(/\D/g, '').replace(/^0+/, ''); }
+  function brandForCode(code) {
+    var d = digitsOf(code), map = {};
+    Object.keys(CODE_BRANDS).forEach(function (k) { map[k] = CODE_BRANDS[k]; });
+    (INV || []).forEach(function (p) {
+      String(p.barcode || '').split(/[,;\/ ]+/).forEach(function (c) { c = digitsOf(c); if (c.length >= 8 && p.brand) map[c.slice(0, 7)] = p.brand; });
+    });
+    for (var n = 8; n >= 6; n--) if (map[d.slice(0, n)]) return map[d.slice(0, n)];
+    return '';
+  }
+  var OWNPICK = [];
+  function ownPick(code) {
+    var box = el('ownpick');
+    if (!box || !INV) return;
+    var brand = brandForCode(code);
+    OWNPICK = INV.filter(function (p) { return !brand || sameBrand(p.brand, brand); })
+      .sort(function (a, b) { return (digitsOf(a.barcode) ? 1 : 0) - (digitsOf(b.barcode) ? 1 : 0) || String(a.name).localeCompare(String(b.name)); });
+    if (!OWNPICK.length) return;
+    box.innerHTML = '<div class="sect">' + (brand ? 'Looks like a <b>' + esc(brand) + '</b> paint. Is it one of yours?' : 'Is it one of yours?') + '</div>' +
+      '<input type="text" placeholder="Filter your ' + esc(brand || '') + ' paints" oninput="ownPickList(this.value)">' +
+      '<div id="ownlist" style="max-height:300px;overflow-y:auto;margin-top:6px"></div>' +
+      '<div class="muted" style="margin-top:6px">Tap it and the barcode is saved, so next time it\'s instant. Not there? Add it below.</div>';
+    ownPickList('');
+  }
+  function ownPickList(q) {
+    var words = normName(q).split(' ').filter(Boolean);
+    el('ownlist').innerHTML = OWNPICK.filter(function (p) {
+      var hay = normName([p.brand, p.range, p.name].join(' '));
+      return words.every(function (w) { return hay.indexOf(w) !== -1; });
+    }).slice(0, 60).map(function (p) {
+      return '<div class="qrow"><span class="sw" style="background:' + (p.hex || 'transparent') + '"></span>' +
+        '<span class="grow"><b>' + esc(p.name) + '</b> <span class="muted">' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + '</span>' +
+        (digitsOf(p.barcode) ? '<br><span class="muted">already has a barcode</span>' : '') + '</span>' +
+        '<button type="button" onclick="linkCode(' + p.row + ')">That\'s it</button></div>';
+    }).join('') || '<div class="muted">None of your paints match.</div>';
   }
 
   // Saves the scanned barcode on a paint you already have, so the next scan finds it straight away.
@@ -1296,11 +1336,12 @@
     show((res.manual ? '<div class="card"><div class="big">✍️ Add a paint</div>' +
         '<div class="muted">Pick it from the paint list, or fill in the boxes yourself. Not listed? Choose “Add my own” under Brand or Range.</div>'
       : res.code ? '<div class="card"><div class="big">🔎 New barcode: which paint is it?</div>' +
-        '<div class="muted">I haven\'t seen barcode ' + esc(res.code) + ' before. Search for the paint below. ' +
-        'If you already have it, tap <b>That\'s it. Remember this barcode</b> and next time it\'s instant. If not, add it.</div>'
+        '<div class="muted">I haven\'t seen barcode ' + esc(res.code) + ' before. If it\'s one of your paints, tap it below ' +
+        'and next time it\'s instant. If you don\'t have it, add it at the bottom.</div>'
       : '<div class="card no"><div class="big">❌ Not in your collection</div>' +
         '<div class="muted">Bought it? Add it:</div>') +
       (g.title ? '<div class="hint">✨ Filled in from the barcode database: “' + esc(g.title) + '” — check it before saving.</div>' : '') +
+      (res.code ? '<div id="ownpick"></div>' : '') +
       '<div class="hint" id="labelhint"></div>' +
       '<div id="labelpicks"></div>' +
       '<div class="hint">Or find it in the paint list:</div>' +
@@ -1323,7 +1364,7 @@
     syncForm();
     autoType();
     catalogReady.then(syncForm); // brand lists may still be loading
-    fetchInv().then(dupCheck, function () {});
+    fetchInv().then(function () { dupCheck(); if (res.code) ownPick(res.code); }, function () {});
 
     if (res.label) return showLabel(res.label, !g.title, res.labelHint);
     if (lastFile) {
