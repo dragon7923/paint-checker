@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "e3cae950dd";
+    var VERSION = "23cd2a7b76";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -680,9 +680,11 @@
       var parts = (p.code + ' ' + p.name).toLowerCase().split(/[\s\-']+/);
       return words.filter(function (w) { return parts.some(function (x) { return x.indexOf(w) === 0; }); }).length;
     }
+    // A typed paint number matches however it's punctuated: "AK-11058" = AK11058, "70950" = 70.950.
+    var tight = words.map(function (w) { var t = w.replace(/[^a-z0-9]/g, ''); return t.length >= 4 && /\d/.test(t) ? t : ''; });
     return CATALOG.filter(function (p) {
-      var hay = (p.brand + ' ' + p.range + ' ' + p.code + ' ' + p.name).toLowerCase();
-      return words.every(function (w) { return hay.indexOf(w) !== -1 || isCode(p, w); });
+      var hay = (p.brand + ' ' + p.range + ' ' + p.code + ' ' + p.name).toLowerCase(), code = p.code.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return words.every(function (w, i) { return hay.indexOf(w) !== -1 || isCode(p, w) || (!!tight[i] && !!code && code.indexOf(tight[i]) !== -1); });
     }).sort(function (a, b) { return (exact(b) - exact(a)) || (starts(b) - starts(a)) || (a.name.length - b.name.length); }).slice(0, 10);
   }
 
