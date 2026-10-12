@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'ec890c07c4';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'cb893b19bb';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -48,9 +48,9 @@
 
   function askEmail(msg) {
     signInBox().innerHTML = frame(
-      '<div style="color:#8e95a2;margin:8px 0 4px">' + (msg || 'Sign in to see your paints on any phone or computer. No password: we email you a sign-in code.') + '</div>' +
+      '<div style="color:#8e95a2;margin:8px 0 4px">' + (msg || 'Sign in to see your paints on any phone or computer. No password: we email you a sign-in link.') + '</div>' +
       '<label style="display:block;margin-top:14px;font-weight:700">Email<input id="siemail" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" style="' + field + '"></label>' +
-      '<button id="sigo" style="' + mainBtn + '">Email me a sign-in code</button>');
+      '<button id="sigo" style="' + mainBtn + '">Email me a sign-in link</button>');
     var go = document.getElementById('sigo'), input = document.getElementById('siemail');
     try { input.value = localStorage.getItem('pc-email') || ''; } catch (e) {}
     function send() {
@@ -60,7 +60,7 @@
       go.textContent = 'Sending…';
       sb.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } })
         .then(function (r) {
-          if (r.error) { go.disabled = false; go.textContent = 'Email me a sign-in code'; document.getElementById('sierr').textContent = friendly(r.error); return; }
+          if (r.error) { go.disabled = false; go.textContent = 'Email me a sign-in link'; document.getElementById('sierr').textContent = friendly(r.error); return; }
           try { localStorage.setItem('pc-email', email); } catch (e) {}
           askCode(email);
         });
@@ -72,8 +72,8 @@
   function askCode(email) {
     signInBox().innerHTML = frame(
       '<div style="color:#8e95a2;margin:8px 0 4px">We sent an email to <b style="color:#e9ebef">' + esc(email) + '</b>. ' +
-      'Type the code from it here, or just tap the link in the email on this device.</div>' +
-      '<label style="display:block;margin-top:14px;font-weight:700">Sign-in code<input id="sicode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" style="' + field + ';letter-spacing:4px"></label>' +
+      'Open it on this device and tap the link in it. That signs you in. You can close this page.</div>' +
+      '<label style="display:block;margin-top:18px;font-weight:700">If the email shows a code instead, type it here<input id="sicode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" style="' + field + ';letter-spacing:4px"></label>' +
       '<button id="sigo" style="' + mainBtn + '">Sign in</button>' +
       '<button id="siback" style="' + linkBtn + '">Use a different email, or send it again</button>');
     var go = document.getElementById('sigo'), input = document.getElementById('sicode');
@@ -119,8 +119,12 @@
       location.reload();
     }
   });
+  // A sign-in link that is old or already used comes back with an error in the address.
+  var linkFailed = /[#?&]error(_code|_description)?=/.test(location.hash + location.search);
   sb.auth.getSession().then(function (r) {
-    if (!r.data.session) (document.body ? askEmail() : document.addEventListener('DOMContentLoaded', function () { askEmail(); }));
+    var msg = linkFailed ? 'That sign-in link has expired or was already used. Enter your email and we\'ll send a new one.' : '';
+    if (linkFailed) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
+    if (!r.data.session) (document.body ? askEmail(msg) : document.addEventListener('DOMContentLoaded', function () { askEmail(msg); }));
   });
 
   function showAccount() {
