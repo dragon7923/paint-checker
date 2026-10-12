@@ -18,11 +18,14 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'f8284f2bba';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '53698e1f39';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
   var session = null;
+  // The privacy page and "Delete my account" are built but switched off until the owner says go
+  // (the delete needs supabase/003_delete_account.sql run first). Set to true to show them.
+  var ACCOUNT_EXTRAS = false;
 
   // ---------- Sign in: your email, then the code we email you ----------
   var field = 'width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid #2b3039;background:#1a1d23;color:#e9ebef;font-size:17px;margin-top:6px';
@@ -42,9 +45,37 @@
   function frame(inner) {
     return '<div style="max-width:420px;width:100%;font-family:system-ui,sans-serif;color:#e9ebef">' +
       '<div style="font-size:24px;font-weight:800">🎨 Paint Checker</div>' + inner +
-      '<div id="sierr" style="color:#ff8a8a;margin-top:12px;min-height:20px"></div></div>';
+      '<div id="sierr" style="color:#ff8a8a;margin-top:12px;min-height:20px"></div>' +
+      (ACCOUNT_EXTRAS ? '<div style="margin-top:18px;font-size:13px"><a href="privacy.html" style="color:#8e95a2">What we keep and how to delete it</a></div>' : '') + '</div>';
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // "Continue with Google" shows up by itself once Google sign-in is switched on in the Supabase project
+  // (Authentication, Sign In / Providers). Until then the sign-in screen is email only.
+  var googleOn = null;
+  function googleEnabled() {
+    if (!googleOn) googleOn = fetch(SB_URL + '/auth/v1/settings', { headers: { apikey: SB_KEY } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { return !!(j && j.external && j.external.google); })
+      .catch(function () { googleOn = null; return false; });
+    return googleOn;
+  }
+  function addGoogleButton() {
+    googleEnabled().then(function (on) {
+      var label = document.getElementById('siemail') && document.getElementById('siemail').parentNode;
+      if (!on || !label || document.getElementById('sigoogle')) return;
+      label.insertAdjacentHTML('beforebegin',
+        '<button id="sigoogle" style="' + mainBtn + ';background:#fff;color:#1f1f1f;display:flex;align-items:center;justify-content:center;gap:10px">' +
+        '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.800-6.800C35.800 2.400 30.300 0 24 0 14.600 0 6.500 5.400 2.600 13.200l7.900 6.100C12.400 13.600 17.700 9.500 24 9.500z"/><path fill="#4285F4" d="M46.100 24.500c0-1.600-.1-3.100-.4-4.500H24v9h12.400c-.5 2.900-2.200 5.300-4.600 7l7.100 5.500c4.200-3.900 7.200-9.600 7.200-17z"/><path fill="#FBBC05" d="M10.500 28.700c-.5-1.500-.8-3-.8-4.700s.3-3.200.8-4.700l-7.900-6.100C.900 16.500 0 20.100 0 24s.9 7.500 2.600 10.800l7.900-6.100z"/><path fill="#34A853" d="M24 48c6.500 0 11.900-2.100 15.900-5.800l-7.100-5.500c-2.100 1.400-4.900 2.300-8.800 2.300-6.300 0-11.600-4.100-13.500-9.800l-7.900 6.100C6.500 42.600 14.600 48 24 48z"/></svg>' +
+        'Continue with Google</button>' +
+        '<div style="text-align:center;color:#8e95a2;margin-top:14px;font-size:13px">or use an email code</div>');
+      document.getElementById('sigoogle').onclick = function () {
+        sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } }).then(function (r) {
+          if (r.error) document.getElementById('sierr').textContent = friendly(r.error);
+        });
+      };
+    });
+  }
 
   function askEmail(msg) {
     signInBox().innerHTML = frame(
@@ -67,6 +98,7 @@
     }
     go.onclick = send;
     input.onkeydown = function (e) { if (e.key === 'Enter') send(); };
+    addGoogleButton();
   }
 
   function askCode(email) {
@@ -153,7 +185,9 @@
     function put() {
       var el = document.getElementById('acct');
       if (!el) return;
-      el.innerHTML = 'Signed in as ' + esc(session.user.email || '') + ' · <a href="#" id="signout" style="color:inherit">Sign out</a>';
+      el.innerHTML = 'Signed in as ' + esc(session.user.email || '') + ' · <a href="#" id="signout" style="color:inherit">Sign out</a>' +
+        (ACCOUNT_EXTRAS ? '<div style="margin-top:6px"><a href="privacy.html" style="color:inherit">Privacy</a> · <a href="#" id="delacct" style="color:inherit">Delete my account</a></div>' : '');
+      if (ACCOUNT_EXTRAS) document.getElementById('delacct').onclick = function (e) { e.preventDefault(); deleteAccount(); };
       document.getElementById('signout').onclick = function (e) {
         e.preventDefault();
         var waiting = outbox().length;
@@ -161,6 +195,35 @@
       };
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', put); else put();
+  }
+
+  // ---------- Delete my account ----------
+  // Removes the account and everything in it (paints, recipes, shopping list) from the database, for good.
+  // The database does the deleting itself (supabase/003_delete_account.sql), and only ever for whoever is asking.
+  function deleteAccount() {
+    var box = signInBox();
+    box.innerHTML = frame(
+      '<div style="font-size:18px;font-weight:800;margin-top:14px">Delete my account</div>' +
+      '<div style="color:#8e95a2;margin:8px 0 4px">This removes your account <b style="color:#e9ebef">' + esc(session.user.email || '') + '</b> and everything in it: your paints, recipes and shopping list, on every device. It can\'t be undone.</div>' +
+      '<label style="display:block;margin-top:14px;font-weight:700">Type DELETE to confirm<input id="delword" type="text" autocomplete="off" autocapitalize="characters" style="' + field + '"></label>' +
+      '<button id="delgo" style="' + mainBtn + ';background:#b3261e">Delete my account for good</button>' +
+      '<button id="delno" style="' + linkBtn + '">Keep my account</button>');
+    var go = document.getElementById('delgo'), err = document.getElementById('sierr');
+    document.getElementById('delno').onclick = function () { box.remove(); };
+    go.onclick = function () {
+      if (document.getElementById('delword').value.trim().toUpperCase() !== 'DELETE') { err.textContent = 'Type the word DELETE in the box to confirm.'; return; }
+      if (!navigator.onLine || offlineUser) { err.textContent = 'You need a connection to delete your account.'; return; }
+      go.disabled = true;
+      go.textContent = 'Deleting…';
+      var who = uid();
+      sb.rpc('delete_my_account').then(function (r) {
+        if (r.error) { go.disabled = false; go.textContent = 'Delete my account for good'; err.textContent = friendly(r.error); return; }
+        try { localStorage.removeItem('pc-data-' + who); localStorage.removeItem('pc-outbox-' + who); localStorage.removeItem('pc-email'); } catch (e) {}
+        box.innerHTML = frame('<div style="margin-top:14px">Your account and everything in it has been deleted.</div>');
+        sb.auth.signOut({ scope: 'local' }).then(function () {}, function () {}); // the sign-in kept on this device goes too; the page then reloads to the sign-in screen
+        setTimeout(function () { location.reload(); }, 2500);
+      });
+    };
   }
 
   // ---------- Your data ----------
