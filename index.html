@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "23cd2a7b76";
+    var VERSION = "41954b7077";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -585,7 +585,10 @@
         rows = rows.map(function (r) {
           return { brand: String(r.brand || ''), code: String(r.code || ''), range: String(r.range || ''), name: String(r.name || ''), hex: r.hex || '', mine: !!r.mine };
         });
-        rows.filter(function (r) { return !r.mine; }).forEach(function (r) { CATALOG.push(r); });
+        // Brands that used to live only on the sheet's Catalog tab are now built in too: don't list them twice.
+        var have = {}, key = function (p) { return [p.brand, p.range, p.code, p.name].join('|').toLowerCase(); };
+        CATALOG.forEach(function (p) { have[key(p)] = 1; });
+        rows.filter(function (r) { return !r.mine && !have[key(r)]; }).forEach(function (r) { CATALOG.push(r); });
         rows.filter(function (r) { return r.mine && !knownBrand(r.brand); }).forEach(function (r) { CATALOG.push(r); });
         showBrands();
         resolve();
