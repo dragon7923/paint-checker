@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'a39b458bd8';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'f8284f2bba';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -229,7 +229,7 @@
     }
     var n = waiting + ' change' + (waiting === 1 ? '' : 's');
     d.textContent = off
-      ? '📴 No connection. You can keep going: what you add or change is kept on this device and sent when you\'re back online.' + (waiting ? ' (' + n + ' waiting)' : '')
+      ? '📴 You\'re offline. Anything you add or change is saved on this device, and will be added to your account when you\'re back online.' + (waiting ? ' (' + n + ' waiting)' : '')
       : '⏳ Sending ' + n + ' you made while offline…';
   }
   window.addEventListener('offline', function () { if (session) note(); });
@@ -299,6 +299,7 @@
     outSave(q); // on this device first: if that fails, nothing has been changed
     applyLocal(m);
     note();
+    toast('📴 You\'re offline. Saved on this device: it will be added to your account when you\'re back online.', 5000);
   }
 
   // Sends the waiting changes, oldest first. Stops (and keeps them) if the connection drops again.
@@ -550,12 +551,15 @@
     var open = function (id) { var e = document.getElementById(id); return !!e && !e.hidden && e.offsetParent !== null; };
     return open('pdetail') || open('liveov') || open('camov') || !!window.recDraft;  // a paint, the camera, or a recipe being edited
   }
-  function toast(text) {
+  function toast(text, ms) {
+    var old = document.getElementById('pctoast');
+    if (old) old.remove(); // one at a time
     var d = document.createElement('div');
-    d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;padding:8px 14px;border-radius:999px;background:#1f2937;color:#e9ebef;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4)';
+    d.style.cssText = 'position:fixed;left:16px;right:16px;bottom:92px;margin:0 auto;width:fit-content;max-width:520px;z-index:150;box-sizing:border-box;text-align:center;padding:10px 16px;border-radius:16px;background:#1f2937;color:#e9ebef;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4)';
+    d.id = 'pctoast';
     d.textContent = text;
     document.body.appendChild(d);
-    setTimeout(function () { d.remove(); }, 2600);
+    setTimeout(function () { d.remove(); }, ms || 2600);
   }
   async function syncCheck() {
     if (syncing || !session || offlineUser || !navigator.onLine || document.visibilityState !== 'visible') return;
