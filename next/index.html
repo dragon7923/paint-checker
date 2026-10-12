@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'b1047bdb56';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '33555e6a79';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -108,10 +108,15 @@
   ready = new Promise(function (res) { readyResolve = res; });
   var started = false;
 
+  var offlineUser = null; // set when the app was opened with no connection, from the sign-in saved on this device
+
   sb.auth.onAuthStateChange(function (event, s) {
     var was = session && session.user && session.user.id;
+    if (!s && offlineUser && event !== 'SIGNED_OUT') return; // still offline: keep showing the saved copy
+    if (!s && event === 'SIGNED_OUT' && was) { try { localStorage.removeItem('pc-data-' + was); } catch (e) {} }
     session = s;
     if (s) {
+      offlineUser = null;
       var box = document.getElementById('signin');
       if (box) box.remove();
       if (!started) { started = true; readyResolve(); }
@@ -126,7 +131,21 @@
   sb.auth.getSession().then(function (r) {
     var msg = linkFailed ? 'That sign-in link has expired or was already used. Enter your email and we\'ll send a new one.' : '';
     if (linkFailed) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
-    if (!r.data.session) (document.body ? askEmail(msg) : document.addEventListener('DOMContentLoaded', function () { askEmail(msg); }));
+    if (r.data.session) return;
+    // No connection, and the saved sign-in couldn't be renewed: carry on as that person with the copy saved on
+    // this device. Only reading works until the connection is back, when the sign-in renews itself.
+    if (!navigator.onLine) {
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem('pc-auth') || 'null'); } catch (e) {}
+      if (saved && saved.user && saved.user.id && localStorage.getItem('pc-data-' + saved.user.id)) {
+        offlineUser = saved.user;
+        session = { user: saved.user };
+        if (!started) { started = true; readyResolve(); }
+        showAccount();
+        return;
+      }
+    }
+    if (document.body) askEmail(msg); else document.addEventListener('DOMContentLoaded', function () { askEmail(msg); });
   });
 
   function showAccount() {
@@ -167,10 +186,49 @@
     if (!PAINTS) return;
     var i = PAINTS.findIndex(function (x) { return x.id === d.id; });
     if (i < 0) PAINTS.push(d); else PAINTS[i] = d;
+    cachePut('paints', PAINTS);
   }
 
+  // ---------- A copy on this device, for when there's no connection ----------
+  // Each list is saved here every time it's read. With no connection the saved copy is shown instead, so you can
+  // still look up and scan what you own. Changes need a connection (see call() below).
+  function cacheKey() { return 'pc-data-' + (session && session.user ? session.user.id : ''); }
+  function cacheAll() { try { return JSON.parse(localStorage.getItem(cacheKey()) || '{}') || {}; } catch (e) { return {}; } }
+  function cachePut(name, value) {
+    try { var all = cacheAll(); all[name] = value; all.at = Date.now(); localStorage.setItem(cacheKey(), JSON.stringify(all)); } catch (e) { /* storage full or blocked: just no offline copy */ }
+  }
+  function unreachable(e) { return !navigator.onLine || /offline|reach the server/i.test(String(e && e.message || e)); }
+  // Reads a list from the database and saves a copy; with no connection, hands back the saved copy.
+  async function readList(name, fetchRows) {
+    var saved = cacheAll()[name];
+    if (!navigator.onLine && saved) { offlineNote(true); return saved; }
+    try {
+      var rows = await fetchRows();
+      cachePut(name, rows);
+      offlineNote(false);
+      return rows;
+    } catch (e) {
+      if (saved && unreachable(e)) { offlineNote(true); return saved; }
+      throw e;
+    }
+  }
+  function offlineNote(on) {
+    var d = document.getElementById('offnote');
+    if (!on) { if (d) d.remove(); return; }
+    if (d || !document.body) return;
+    d = document.createElement('div');
+    d.id = 'offnote';
+    d.style.cssText = 'position:sticky;top:0;z-index:90;padding:8px 12px;background:#3b2f12;color:#f4d58d;font:13px system-ui,sans-serif;text-align:center';
+    d.textContent = '📴 No connection. Showing the copy saved on this device. Adding and changing paints will work again when you\'re back online.';
+    document.body.insertBefore(d, document.body.firstChild);
+  }
+  window.addEventListener('offline', function () { if (session) offlineNote(true); });
+  window.addEventListener('online', function () { offlineNote(false); });
+
   async function loadPaints() {
-    PAINTS = check(await sb.from('paints').select('*').order('created_at', { ascending: true }).order('id', { ascending: true }));
+    PAINTS = await readList('paints', async function () {
+      return check(await sb.from('paints').select('*').order('created_at', { ascending: true }).order('id', { ascending: true }));
+    });
     return PAINTS;
   }
   async function paints() { return PAINTS || loadPaints(); }
@@ -186,7 +244,9 @@
     return { recipe: name, section: ABOUT, technique: '', brand: '', paint: '', notes: notes || '', position: 0 };
   }
   async function recipes() {
-    var rows = check(await sb.from('recipe_steps').select('*').order('created_at', { ascending: true }).order('position', { ascending: true }));
+    var rows = await readList('recipe_steps', async function () {
+      return check(await sb.from('recipe_steps').select('*').order('created_at', { ascending: true }).order('position', { ascending: true }));
+    });
     var byName = {}, order = [];
     rows.forEach(function (r) {
       var rec = byName[r.recipe];
@@ -202,7 +262,9 @@
     });
   }
   async function wishes() {
-    var rows = check(await sb.from('wishlist').select('*').order('created_at', { ascending: true }));
+    var rows = await readList('wishlist', async function () {
+      return check(await sb.from('wishlist').select('*').order('created_at', { ascending: true }));
+    });
     return rows.map(function (w) { return { row: wishH.row(w.id), brand: w.brand, range: w.range, name: w.name, reason: w.reason || 'Want', notes: w.notes }; });
   }
 
@@ -322,6 +384,7 @@
     attempt = attempt || 0;
     ready.then(function () {
       if (!API[fn]) throw new Error('Unknown action: ' + fn);
+      if (!READS.test(fn) && !navigator.onLine) throw new Error('No connection, so that wasn\'t saved. Try again when you\'re back online.');
       return API[fn].apply(null, args);
     }).then(function (result) {
       if (!READS.test(fn)) syncBaseline(); // my own change: don't treat it as news from another device
