@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '33555e6a79';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '697a2359c0';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -384,7 +384,7 @@
     attempt = attempt || 0;
     ready.then(function () {
       if (!API[fn]) throw new Error('Unknown action: ' + fn);
-      if (!READS.test(fn) && !navigator.onLine) throw new Error('No connection, so that wasn\'t saved. Try again when you\'re back online.');
+      if (!READS.test(fn) && !navigator.onLine) throw new Error('You\'re offline, so that wasn\'t saved. Nothing is broken: try again when you\'re back online.');
       return API[fn].apply(null, args);
     }).then(function (result) {
       if (!READS.test(fn)) syncBaseline(); // my own change: don't treat it as news from another device
@@ -1969,7 +1969,7 @@
     google.script.run.withSuccessHandler(function () {
       quickDone('<div class="card yes"><div class="big">✅ Added ' + esc(paint.name) + '</div>' +
         '<div class="muted">' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + '. Type the next one.</div></div>');
-    }).withFailureHandler(fail).addPaint(paint);
+    }).withFailureHandler(function (e) { quickList(); fail(e); }).addPaint(paint); // put the choices back, so it doesn't sit on "Adding…"
   }
 
   function quickMore(row) {
