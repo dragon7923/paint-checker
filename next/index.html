@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '75f5526054';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '10c0e0bcc1';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -338,6 +338,107 @@
   } } } };
   window.pcCloud = { client: sb, api: API }; // for the "bring my Google Sheet across" tool and for testing
 
+  // ---------- Bring my Google Sheet across ----------
+  // Reads the paints, recipes and shopping list from the Google Sheet version (through its own connection link and
+  // app code) and copies them into this account. The sheet is only read, never changed. Anything already in the
+  // account is skipped, so pressing it twice doesn't double things up.
+  var FIRST_API = 'https://script.google.com/macros/s/AKfycbzU-nXcvfCQ1Ye8s9ZYPvv3jkWXwnyWE962bt5Y-Jou56Z5ezX-9G8Y8HhSvBLH_FDY/exec';
+  var LINK_RE = /^https:\/\/script\.google\.com\/(a\/[^\/]+\/)?macros\/s\/[\w-]+\/exec$/;
+  function stored(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function sheetCall(link, code, fn) {
+    return fetch(link, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: code, fn: fn, args: [] }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) return res.result;
+        throw new Error(/secret code/i.test(res.error) ? 'That app code didn\'t work. Check it and try again.' : res.error);
+      }, function () { throw new Error(navigator.onLine ? 'Could not reach your Google Sheet. Check the connection link, then try again.' : 'You are offline.'); });
+  }
+  function low(s) { return String(s || '').trim().toLowerCase(); }
+  async function insertAll(table, rows) {
+    for (var i = 0; i < rows.length; i += 200) check(await sb.from(table).insert(rows.slice(i, i + 200)));
+  }
+  async function importSheet(link, code, say) {
+    say('Reading your Google Sheet…');
+    var theirs = await sheetCall(link, code, 'listPaints');
+    var recs = await sheetCall(link, code, 'getRecipes');
+    var wants = await sheetCall(link, code, 'getWishlist');
+
+    say('Copying ' + theirs.length + ' paints…');
+    var pkey = function (p) { return [low(p.brand), low(p.range), low(p.name)].join('|'); };
+    var have = {};
+    (await loadPaints()).forEach(function (d) { have[pkey(d)] = 1; });
+    var newPaints = [], fresh = {};
+    theirs.forEach(function (p) {
+      if (!String(p.name || '').trim()) return;
+      var qty = Math.max(0, Number(p.qty) || 0);
+      if (fresh[pkey(p)]) { fresh[pkey(p)].qty += qty; return; } // the same paint on two rows of the sheet: one paint, amounts added
+      if (have[pkey(p)]) return;
+      var row = paintRow(p);
+      row.qty = qty;
+      fresh[pkey(p)] = row;
+      newPaints.push(row);
+    });
+    await insertAll('paints', newPaints);
+
+    var haveRec = {};
+    (await recipes()).forEach(function (r) { haveRec[low(r.name)] = 1; });
+    var steps = [], newRecs = 0;
+    (recs || []).forEach(function (rec) {
+      var name = String(rec.name || '').trim();
+      if (!name || haveRec[low(name)]) return;
+      haveRec[low(name)] = 1;
+      newRecs++;
+      steps.push({ recipe: name, section: ABOUT, notes: rec.notes || '', position: 0 });
+      (rec.steps || []).forEach(function (s, i) {
+        steps.push({ recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 });
+      });
+    });
+    await insertAll('recipe_steps', steps);
+
+    var wkey = function (w) { return low(w.brand) + '|' + low(w.name); };
+    var haveWish = {};
+    check(await sb.from('wishlist').select('*')).forEach(function (w) { haveWish[wkey(w)] = 1; });
+    var newWants = [];
+    (wants || []).forEach(function (w) {
+      if (!String(w.name || '').trim() || haveWish[wkey(w)]) return;
+      haveWish[wkey(w)] = 1;
+      newWants.push({ brand: w.brand || '', range: w.range || '', name: String(w.name).trim(), reason: w.reason || 'Want', notes: w.notes || '' });
+    });
+    await insertAll('wishlist', newWants);
+    await loadPaints();
+    return { paints: newPaints.length, skipped: theirs.length - newPaints.length, recipes: newRecs, wishes: newWants.length };
+  }
+
+  function importCard() {
+    var at = document.getElementById('acct');
+    if (!at || document.getElementById('imp')) return;
+    at.insertAdjacentHTML('afterend', '<div id="imp" style="margin-top:14px;text-align:center"><button class="ghost" id="impopen">⬇️ Bring my paints over from my Google Sheet</button><div id="impbox"></div></div>');
+    document.getElementById('impopen').onclick = function () {
+      var box = document.getElementById('impbox'), known = stored('pc-code');
+      box.innerHTML = '<div class="card" style="text-align:left;margin-top:10px">' +
+        '<div><b>Copy everything from the Google Sheet version</b></div>' +
+        '<div class="muted" style="margin:6px 0">Your paints (with amounts, barcodes and notes), recipes and shopping list are copied into this account. Your Google Sheet is only read, never changed. Anything already here is skipped.</div>' +
+        (known ? '<div class="muted">This device is already connected to your Google Sheet.</div>' :
+          '<label style="display:block;margin-top:8px">Connection link<input id="implink" type="url" placeholder="https://script.google.com/macros/s/…/exec" style="width:100%;box-sizing:border-box"></label>' +
+          '<label style="display:block;margin-top:8px">App code<input id="impcode" type="text" autocomplete="off" style="width:100%;box-sizing:border-box"></label>' +
+          '<div class="muted" style="margin-top:4px">These are the two things you typed when you first set up the Paint Checker app.</div>') +
+        '<div class="row" style="margin-top:10px"><button id="impgo">Copy them over</button></div><div id="impmsg" class="muted" style="margin-top:8px"></div></div>';
+      var go = document.getElementById('impgo'), msg = document.getElementById('impmsg');
+      go.onclick = function () {
+        var link = known ? (stored('pc-api') || FIRST_API) : document.getElementById('implink').value.trim();
+        var code = known || document.getElementById('impcode').value.trim();
+        if (!LINK_RE.test(link)) { msg.textContent = '⚠️ That connection link doesn\'t look right. It starts with https://script.google.com/macros/s/ and ends with /exec.'; return; }
+        if (!code) { msg.textContent = '⚠️ Type your app code.'; return; }
+        go.disabled = true;
+        importSheet(link, code, function (t) { msg.textContent = t; }).then(function (r) {
+          msg.innerHTML = '✅ Copied ' + r.paints + ' paint' + (r.paints === 1 ? '' : 's') + ', ' + r.recipes + ' recipe' + (r.recipes === 1 ? '' : 's') + ' and ' + r.wishes + ' shopping list item' + (r.wishes === 1 ? '' : 's') + '.' +
+            (r.skipped ? ' ' + r.skipped + ' row' + (r.skipped === 1 ? ' was' : 's were') + ' skipped (already here, listed twice, or blank).' : '') + ' Reloading…';
+          setTimeout(function () { location.reload(); }, 2500);
+        }, function (e) { go.disabled = false; msg.textContent = '⚠️ ' + (e && e.message || e); });
+      };
+    };
+  }
+
   // ---------- The app shell: offline helper, self-update, error box, version line ----------
   if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
@@ -376,6 +477,7 @@
     var pout = document.getElementById('pout');
     if (pout) pout.insertAdjacentHTML('afterend', tag);
     if (session) showAccount();
+    importCard();
   });
 })();
 
