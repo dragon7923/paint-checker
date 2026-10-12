@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '697a2359c0';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'a39b458bd8';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -113,7 +113,7 @@
   sb.auth.onAuthStateChange(function (event, s) {
     var was = session && session.user && session.user.id;
     if (!s && offlineUser && event !== 'SIGNED_OUT') return; // still offline: keep showing the saved copy
-    if (!s && event === 'SIGNED_OUT' && was) { try { localStorage.removeItem('pc-data-' + was); } catch (e) {} }
+    if (!s && event === 'SIGNED_OUT' && was) { try { localStorage.removeItem('pc-data-' + was); localStorage.removeItem('pc-outbox-' + was); } catch (e) {} }
     session = s;
     if (s) {
       offlineUser = null;
@@ -122,6 +122,7 @@
       if (!started) { started = true; readyResolve(); }
       else if (was !== s.user.id) location.reload(); // a different person signed in: start clean
       showAccount();
+      if (started) flush(); // anything made offline goes up as soon as the sign-in is good again
     } else if (event === 'SIGNED_OUT') {
       location.reload();
     }
@@ -155,7 +156,8 @@
       el.innerHTML = 'Signed in as ' + esc(session.user.email || '') + ' · <a href="#" id="signout" style="color:inherit">Sign out</a>';
       document.getElementById('signout').onclick = function (e) {
         e.preventDefault();
-        if (confirm('Sign out on this device? Your paints stay saved in your account.')) sb.auth.signOut();
+        var waiting = outbox().length;
+        if (confirm(waiting ? 'You have ' + waiting + ' change' + (waiting === 1 ? '' : 's') + ' made offline that ' + (waiting === 1 ? 'hasn\'t' : 'haven\'t') + ' been sent yet. Signing out now will lose ' + (waiting === 1 ? 'it' : 'them') + '. Sign out anyway?' : 'Sign out on this device? Your paints stay saved in your account.')) sb.auth.signOut();
       };
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', put); else put();
@@ -172,7 +174,6 @@
     };
   }
   var paintH = handles(), wishH = handles();
-  var PAINTS = null; // the last list of paints read, as database rows
 
   function check(r) { if (r.error) throw new Error(friendly(r.error)); return r.data; }
   function toPaint(d) {
@@ -182,73 +183,197 @@
     return { barcode: String(p.barcode || '').replace(/^'/, ''), brand: p.brand || '', range: p.range || '', name: String(p.name || '').trim(), notes: p.notes || '', type: p.type || '', qty: 1 };
   }
   function digits(v) { return String(v || '').replace(/\D/g, '').replace(/^0+/, ''); }
-  function remember(d) {
-    if (!PAINTS) return;
-    var i = PAINTS.findIndex(function (x) { return x.id === d.id; });
-    if (i < 0) PAINTS.push(d); else PAINTS[i] = d;
-    cachePut('paints', PAINTS);
-  }
-
-  // ---------- A copy on this device, for when there's no connection ----------
-  // Each list is saved here every time it's read. With no connection the saved copy is shown instead, so you can
-  // still look up and scan what you own. Changes need a connection (see call() below).
-  function cacheKey() { return 'pc-data-' + (session && session.user ? session.user.id : ''); }
-  function cacheAll() { try { return JSON.parse(localStorage.getItem(cacheKey()) || '{}') || {}; } catch (e) { return {}; } }
-  function cachePut(name, value) {
-    try { var all = cacheAll(); all[name] = value; all.at = Date.now(); localStorage.setItem(cacheKey(), JSON.stringify(all)); } catch (e) { /* storage full or blocked: just no offline copy */ }
-  }
-  function unreachable(e) { return !navigator.onLine || /offline|reach the server/i.test(String(e && e.message || e)); }
-  // Reads a list from the database and saves a copy; with no connection, hands back the saved copy.
-  async function readList(name, fetchRows) {
-    var saved = cacheAll()[name];
-    if (!navigator.onLine && saved) { offlineNote(true); return saved; }
-    try {
-      var rows = await fetchRows();
-      cachePut(name, rows);
-      offlineNote(false);
-      return rows;
-    } catch (e) {
-      if (saved && unreachable(e)) { offlineNote(true); return saved; }
-      throw e;
-    }
-  }
-  function offlineNote(on) {
-    var d = document.getElementById('offnote');
-    if (!on) { if (d) d.remove(); return; }
-    if (d || !document.body) return;
-    d = document.createElement('div');
-    d.id = 'offnote';
-    d.style.cssText = 'position:sticky;top:0;z-index:90;padding:8px 12px;background:#3b2f12;color:#f4d58d;font:13px system-ui,sans-serif;text-align:center';
-    d.textContent = '📴 No connection. Showing the copy saved on this device. Adding and changing paints will work again when you\'re back online.';
-    document.body.insertBefore(d, document.body.firstChild);
-  }
-  window.addEventListener('offline', function () { if (session) offlineNote(true); });
-  window.addEventListener('online', function () { offlineNote(false); });
-
-  async function loadPaints() {
-    PAINTS = await readList('paints', async function () {
-      return check(await sb.from('paints').select('*').order('created_at', { ascending: true }).order('id', { ascending: true }));
-    });
-    return PAINTS;
-  }
-  async function paints() { return PAINTS || loadPaints(); }
-  async function paintByRow(row) {
-    var id = paintH.id(row);
-    return (await paints()).filter(function (d) { return d.id === id; })[0] || check(await sb.from('paints').select('*').eq('id', id).single());
+  function newId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
   }
 
   var ABOUT = '(about)'; // a recipe's own notes are kept on a step with this as its section
   // Rows saved together must all name the same columns: the database fills a column left out of one row with
   // "nothing" rather than its default, and then refuses the row.
   function aboutRow(name, notes) {
-    return { recipe: name, section: ABOUT, technique: '', brand: '', paint: '', notes: notes || '', position: 0 };
+    return { id: newId(), recipe: name, section: ABOUT, technique: '', brand: '', paint: '', notes: notes || '', position: 0 };
   }
-  async function recipes() {
-    var rows = await readList('recipe_steps', async function () {
-      return check(await sb.from('recipe_steps').select('*').order('created_at', { ascending: true }).order('position', { ascending: true }));
+
+  // ---------- A copy on this device, and changes made with no connection ----------
+  // T holds each list as database rows. Every list is saved on this device whenever it's read or changed, so with
+  // no connection you still see everything. A change made with no connection is applied to the copy here straight
+  // away and put in a waiting list (the "outbox"); when the connection is back the waiting changes are sent, in
+  // order, and the lists are read again from the database.
+  var T = { paints: null, recipe_steps: null, wishlist: null };
+  var DEFAULTS = { paints: { barcode: '', brand: '', range: '', qty: 1, notes: '', type: '' },
+    recipe_steps: { section: '', technique: '', brand: '', paint: '', notes: '', position: 0 },
+    wishlist: { brand: '', range: '', reason: 'Want', notes: '' } };
+  function uid() { return session && session.user ? session.user.id : ''; }
+  function cacheAll() { try { return JSON.parse(localStorage.getItem('pc-data-' + uid()) || '{}') || {}; } catch (e) { return {}; } }
+  function cachePut(name, value) {
+    try { var all = cacheAll(); all[name] = value; all.at = Date.now(); localStorage.setItem('pc-data-' + uid(), JSON.stringify(all)); } catch (e) { /* storage full or blocked: just no offline copy */ }
+  }
+  function outbox() { try { return JSON.parse(localStorage.getItem('pc-outbox-' + uid()) || '[]') || []; } catch (e) { return []; } }
+  function outSave(list) { localStorage.setItem('pc-outbox-' + uid(), JSON.stringify(list)); } // may throw if storage is blocked: then the change is refused, not lost quietly
+  function unreachable(e) { return !navigator.onLine || /offline|reach the server/i.test(String(e && e.message || e)); }
+  // The sign-in couldn't be checked (it renews itself once the connection is properly back): wait, don't give up.
+  function notSignedIn(e) { return /jwt|401|not authenticated|permission denied|row-level security/i.test(String(e && e.message || e)); }
+
+  var fellBack = false; // the last read had to use the saved copy
+  function note() {
+    var waiting = session ? outbox().length : 0, off = !navigator.onLine || fellBack;
+    var d = document.getElementById('offnote');
+    if (!off && !waiting) { if (d) d.remove(); return; }
+    if (!document.body) return;
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'offnote';
+      d.style.cssText = 'position:sticky;top:0;z-index:90;padding:8px 12px;background:#3b2f12;color:#f4d58d;font:13px system-ui,sans-serif;text-align:center';
+      document.body.insertBefore(d, document.body.firstChild);
+    }
+    var n = waiting + ' change' + (waiting === 1 ? '' : 's');
+    d.textContent = off
+      ? '📴 No connection. You can keep going: what you add or change is kept on this device and sent when you\'re back online.' + (waiting ? ' (' + n + ' waiting)' : '')
+      : '⏳ Sending ' + n + ' you made while offline…';
+  }
+  window.addEventListener('offline', function () { if (session) note(); });
+
+  async function fetchTable(t) {
+    var q = sb.from(t).select('*').order('created_at', { ascending: true });
+    if (t === 'paints') q = q.order('id', { ascending: true });
+    if (t === 'recipe_steps') q = q.order('position', { ascending: true });
+    return check(await q);
+  }
+  // A list, as database rows. fresh: read it again from the database if that's possible right now.
+  async function rows(t, fresh) {
+    if (T[t] && !fresh) return T[t];
+    if (outbox().length) await flush(); // send what's waiting first, so the database isn't missing it
+    var saved = T[t] || cacheAll()[t];
+    if (saved && (outbox().length || !navigator.onLine)) { T[t] = saved; note(); return saved; }
+    try {
+      T[t] = await fetchTable(t);
+      cachePut(t, T[t]);
+      fellBack = false;
+    } catch (e) {
+      if (!saved || !unreachable(e)) throw e;
+      T[t] = saved;
+      fellBack = true;
+    }
+    note();
+    return T[t];
+  }
+
+  // One change. k: 'ins' (rows), 'upd' (id, patch), 'qty' (id, delta), 'del' (id), 'delRecipe' (names).
+  async function send(m, again) {
+    var q = sb.from(m.t);
+    if (m.k === 'ins') return check(await (again ? q.upsert(m.rows) : q.insert(m.rows)).select()); // "again": it may already have arrived once
+    if (m.k === 'upd') return check(await q.update(m.patch).eq('id', m.id).select());
+    if (m.k === 'qty') { // "one more / one fewer" is added to whatever the amount is now, so two devices don't overwrite each other
+      var cur = check(await q.select('*').eq('id', m.id));
+      if (!cur.length) return [];
+      return check(await sb.from(m.t).update({ qty: Math.max(0, (Number(cur[0].qty) || 0) + m.delta) }).eq('id', m.id).select());
+    }
+    if (m.k === 'del') { check(await q.delete().eq('id', m.id)); return []; }
+    if (m.k === 'delRecipe') { check(await q.delete().in('recipe', m.names)); return []; }
+    throw new Error('Unknown change: ' + m.k);
+  }
+  // Makes the same change to the copy on this device. got: the rows the database sent back, when it was reached.
+  function applyLocal(m, got) {
+    var list = T[m.t] || [], now = new Date().toISOString(), back = got && got.length ? got : null;
+    function put(r) { var i = list.findIndex(function (d) { return d.id === r.id; }); if (i < 0) list.push(r); else list[i] = r; }
+    if (m.k === 'ins') (back || m.rows.map(function (r) { return Object.assign({ user_id: uid(), created_at: now, updated_at: now }, DEFAULTS[m.t], r); })).forEach(put);
+    if (m.k === 'upd') list.forEach(function (d) { if (d.id === m.id) Object.assign(d, back ? back[0] : m.patch, back ? {} : { updated_at: now }); });
+    if (m.k === 'qty') list.forEach(function (d) {
+      if (d.id !== m.id) return;
+      if (back) Object.assign(d, back[0]); else { d.qty = Math.max(0, (Number(d.qty) || 0) + m.delta); d.updated_at = now; }
+    });
+    if (m.k === 'del') list = list.filter(function (d) { return d.id !== m.id; });
+    if (m.k === 'delRecipe') list = list.filter(function (d) { return m.names.indexOf(d.recipe) === -1; });
+    T[m.t] = list;
+    cachePut(m.t, list);
+  }
+  async function write(m) {
+    await rows(m.t); // have the list in hand (this also sends anything still waiting, to keep changes in order)
+    if (navigator.onLine && !outbox().length) {
+      try { applyLocal(m, await send(m)); return; }
+      catch (e) { if (!unreachable(e)) throw e; }
+    }
+    var q = outbox();
+    q.push(m);
+    outSave(q); // on this device first: if that fails, nothing has been changed
+    applyLocal(m);
+    note();
+  }
+
+  // Sends the waiting changes, oldest first. Stops (and keeps them) if the connection drops again.
+  var flushing = null;
+  function flush() {
+    if (!flushing) flushing = doFlush().then(function () { flushing = null; }, function () { flushing = null; });
+    return flushing;
+  }
+  async function doFlush() {
+    if (!navigator.onLine || !session || offlineUser) return;
+    var q = outbox(), sent = 0, failed = 0;
+    if (!q.length) return;
+    note();
+    while (q.length) {
+      try { await send(q[0], true); sent++; }
+      catch (e) {
+        if (unreachable(e)) break;
+        q[0].tries = (q[0].tries || 0) + 1;
+        if (notSignedIn(e) && q[0].tries < 5) { outSave(q); break; } // try again later
+        failed++;
+      }
+      q.shift();
+      outSave(q);
+    }
+    if (!q.length) {
+      redraw(['paints', 'recipe_steps', 'wishlist']);
+      syncBaseline();
+      if (sent) toast('✅ ' + sent + ' change' + (sent === 1 ? '' : 's') + ' you made offline ' + (sent === 1 ? 'is' : 'are') + ' now saved');
+      if (failed) errBox(failed + ' change' + (failed === 1 ? '' : 's') + ' made offline could not be saved (the paint may have been removed on another device).');
+    }
+    note();
+  }
+  window.addEventListener('online', function () { note(); flush(); });
+
+  // Forget the lists named and draw the screen again from the database.
+  function pageShown(id) { var e = document.getElementById(id); return !!e && !e.hidden; }
+  function redraw(tables) {
+    var applied = false;
+    if (tables.indexOf('paints') !== -1) {
+      T.paints = null;
+      window.INV = null;
+      if (pageShown('inv') && window.loadInv) window.loadInv();
+      applied = true;
+    }
+    if (tables.indexOf('wishlist') !== -1 && window.loadWish) {
+      T.wishlist = null;
+      window.loadWish().then(function () { var v = document.getElementById('wishview'); if (v && v.offsetParent !== null && window.renderWish) window.renderWish(); });
+      applied = true;
+    }
+    if (tables.indexOf('recipe_steps') !== -1 && !pageShown('rec')) { // leave a recipe you're looking at alone; it refreshes when you leave the page
+      T.recipe_steps = null;
+      window.RECIPES = null;
+      var rv = document.getElementById('recview');
+      if (rv) rv.innerHTML = '';
+      applied = true;
+    }
+    return applied;
+  }
+
+  async function paints() { return rows('paints'); }
+  function paintById(id) { return (T.paints || []).filter(function (d) { return d.id === id; })[0]; }
+  async function paintByRow(row) {
+    var id = paintH.id(row);
+    await paints();
+    var d = paintById(id);
+    if (!d) throw new Error('That paint is no longer there. Refresh and try again.');
+    return d;
+  }
+
+  async function recipes(fresh) {
+    var list = (await rows('recipe_steps', fresh)).slice().sort(function (a, b) {
+      return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.position - b.position;
     });
     var byName = {}, order = [];
-    rows.forEach(function (r) {
+    list.forEach(function (r) {
       var rec = byName[r.recipe];
       if (!rec) { rec = byName[r.recipe] = { name: r.recipe, notes: '', steps: [] }; order.push(r.recipe); }
       if (r.section === ABOUT) rec.notes = r.notes;
@@ -261,15 +386,12 @@
       return rec;
     });
   }
-  async function wishes() {
-    var rows = await readList('wishlist', async function () {
-      return check(await sb.from('wishlist').select('*').order('created_at', { ascending: true }));
-    });
-    return rows.map(function (w) { return { row: wishH.row(w.id), brand: w.brand, range: w.range, name: w.name, reason: w.reason || 'Want', notes: w.notes }; });
+  async function wishes(fresh) {
+    return (await rows('wishlist', fresh)).map(function (w) { return { row: wishH.row(w.id), brand: w.brand, range: w.range, name: w.name, reason: w.reason || 'Want', notes: w.notes }; });
   }
 
   var API = {
-    listPaints: async function () { return (await loadPaints()).map(toPaint); },
+    listPaints: async function () { return (await rows('paints', true)).map(toPaint); },
 
     search: async function (query) {
       var q = String(query || '').toLowerCase().trim();
@@ -290,27 +412,26 @@
     addPaint: async function (p) {
       var row = paintRow(p);
       if (!row.name) throw new Error('Give the paint a name.');
-      var d = check(await sb.from('paints').insert(row).select().single());
-      remember(d);
-      return { found: true, paint: toPaint(d) };
+      row.id = newId();
+      await write({ t: 'paints', k: 'ins', rows: [row] });
+      return { found: true, paint: toPaint(paintById(row.id)) };
     },
 
     addPaints: async function (list) {
-      var rows = (list || []).filter(function (p) { return p && p.name; }).map(paintRow);
-      if (rows.length) check(await sb.from('paints').insert(rows));
-      return API.listPaints();
+      var add = (list || []).filter(function (p) { return p && p.name; }).map(function (p) { var r = paintRow(p); r.id = newId(); return r; });
+      if (add.length) await write({ t: 'paints', k: 'ins', rows: add });
+      return (await paints()).map(toPaint);
     },
 
     setType: async function (row, type) {
-      remember(check(await sb.from('paints').update({ type: type || '' }).eq('id', paintH.id(row)).select().single()));
+      await write({ t: 'paints', k: 'upd', id: paintH.id(row), patch: { type: type || '' } });
       return type || '';
     },
 
     changeQty: async function (row, delta) {
       var cur = await paintByRow(row);
-      var qty = Math.max(0, (Number(cur.qty) || 0) + delta);
-      remember(check(await sb.from('paints').update({ qty: qty }).eq('id', cur.id).select().single()));
-      return qty;
+      await write({ t: 'paints', k: 'qty', id: cur.id, delta: delta });
+      return (paintById(cur.id) || cur).qty;
     },
 
     linkBarcode: async function (row, code) {
@@ -318,9 +439,8 @@
       if (!d) throw new Error('No barcode to save');
       var cur = await paintByRow(row), old = String(cur.barcode || '');
       var have = old.split(/[,;\/ ]+/).some(function (c) { return digits(c) === digits(d); });
-      var saved = have ? cur : check(await sb.from('paints').update({ barcode: (old ? old + ', ' : '') + d }).eq('id', cur.id).select().single());
-      remember(saved);
-      return { found: true, paint: toPaint(saved) };
+      if (!have) await write({ t: 'paints', k: 'upd', id: cur.id, patch: { barcode: (old ? old + ', ' : '') + d } });
+      return { found: true, paint: toPaint(paintById(cur.id) || cur) };
     },
 
     // Extra paint brands used to live on a "Catalog" tab of the sheet. They move into the shared paint list (Phase 3).
@@ -328,52 +448,52 @@
     importCommunityList: async function () { throw new Error('Adding brands from the community list is coming to this version soon. The built-in brands all work.'); },
     importStore: async function () { throw new Error('Reading a shop\'s paint list is coming to this version soon. The built-in brands all work.'); },
 
-    getRecipes: recipes,
+    getRecipes: function () { return recipes(true); },
 
     saveRecipe: async function (rec, oldName) {
       var name = String(rec.name || '').trim();
       if (!name) throw new Error('Give the recipe a name.');
-      check(await sb.from('recipe_steps').delete().in('recipe', [name, oldName || name]));
-      var rows = [aboutRow(name, rec.notes)].concat((rec.steps || []).map(function (s, i) {
-        return { recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 };
+      var add = [aboutRow(name, rec.notes)].concat((rec.steps || []).map(function (s, i) {
+        return { id: newId(), recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 };
       }));
-      check(await sb.from('recipe_steps').insert(rows));
+      await write({ t: 'recipe_steps', k: 'delRecipe', names: oldName && oldName !== name ? [name, oldName] : [name] });
+      await write({ t: 'recipe_steps', k: 'ins', rows: add });
       return recipes();
     },
 
     deleteRecipe: async function (name) {
-      check(await sb.from('recipe_steps').delete().eq('recipe', name));
+      await write({ t: 'recipe_steps', k: 'delRecipe', names: [name] });
       return recipes();
     },
 
-    getWishlist: wishes,
+    getWishlist: function () { return wishes(true); },
 
     // Adds a paint to the list, or just updates the reason if it's already on it.
     addWish: async function (w) {
-      var rows = check(await sb.from('wishlist').select('*'));
-      var same = rows.filter(function (x) {
+      var same = (await rows('wishlist')).filter(function (x) {
         return x.name.toLowerCase() === String(w.name).toLowerCase() && String(x.brand).toLowerCase() === String(w.brand || '').toLowerCase();
       })[0];
-      if (same) check(await sb.from('wishlist').update({ reason: w.reason || 'Want' }).eq('id', same.id));
-      else check(await sb.from('wishlist').insert({ brand: w.brand || '', range: w.range || '', name: w.name, reason: w.reason || 'Want', notes: w.notes || '' }));
+      if (same) await write({ t: 'wishlist', k: 'upd', id: same.id, patch: { reason: w.reason || 'Want' } });
+      else await write({ t: 'wishlist', k: 'ins', rows: [{ id: newId(), brand: w.brand || '', range: w.range || '', name: w.name, reason: w.reason || 'Want', notes: w.notes || '' }] });
       return wishes();
     },
 
     removeWish: async function (row) {
-      check(await sb.from('wishlist').delete().eq('id', wishH.id(row)));
+      await write({ t: 'wishlist', k: 'del', id: wishH.id(row) });
       return wishes();
     },
 
     // Bought it: one more bottle of the paint you have, or a new paint; then it leaves the shopping list.
     boughtWish: async function (row, type) {
       var id = wishH.id(row);
-      var w = check(await sb.from('wishlist').select('*').eq('id', id).single());
-      var mine = (await loadPaints()).filter(function (d) {
+      var w = (await rows('wishlist')).filter(function (x) { return x.id === id; })[0];
+      if (!w) throw new Error('That item is no longer on the list. Refresh and try again.');
+      var mine = (await paints()).filter(function (d) {
         return d.name.toLowerCase() === w.name.toLowerCase() && String(d.brand).toLowerCase() === String(w.brand).toLowerCase();
       })[0];
-      if (mine) remember(check(await sb.from('paints').update({ qty: (Number(mine.qty) || 0) + 1 }).eq('id', mine.id).select().single()));
-      else remember(check(await sb.from('paints').insert({ brand: w.brand, range: w.range, name: w.name, type: type || '', qty: 1 }).select().single()));
-      check(await sb.from('wishlist').delete().eq('id', id));
+      if (mine) await write({ t: 'paints', k: 'qty', id: mine.id, delta: 1 });
+      else await write({ t: 'paints', k: 'ins', rows: [{ id: newId(), barcode: '', brand: w.brand, range: w.range, name: w.name, notes: '', type: type || '', qty: 1 }] });
+      await write({ t: 'wishlist', k: 'del', id: id });
       return wishes();
     }
   };
@@ -384,7 +504,6 @@
     attempt = attempt || 0;
     ready.then(function () {
       if (!API[fn]) throw new Error('Unknown action: ' + fn);
-      if (!READS.test(fn) && !navigator.onLine) throw new Error('You\'re offline, so that wasn\'t saved. Nothing is broken: try again when you\'re back online.');
       return API[fn].apply(null, args);
     }).then(function (result) {
       if (!READS.test(fn)) syncBaseline(); // my own change: don't treat it as news from another device
@@ -424,14 +543,13 @@
     for (var i = 0; i < SYNC_TABLES.length; i++) out[SYNC_TABLES[i]] = await stampOf(SYNC_TABLES[i]);
     return out;
   }
-  function syncBaseline() { if (session) allStamps().then(function (s) { stamps = s; }, function () {}); }
+  function syncBaseline() { if (session && navigator.onLine && !offlineUser && !outbox().length) allStamps().then(function (s) { stamps = s; }, function () {}); }
   function busy() {
     var a = document.activeElement, tag = a && a.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;      // typing or choosing
     var open = function (id) { var e = document.getElementById(id); return !!e && !e.hidden && e.offsetParent !== null; };
     return open('pdetail') || open('liveov') || open('camov') || !!window.recDraft;  // a paint, the camera, or a recipe being edited
   }
-  function pageShown(id) { var e = document.getElementById(id); return !!e && !e.hidden; }
   function toast(text) {
     var d = document.createElement('div');
     d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;padding:8px 14px;border-radius:999px;background:#1f2937;color:#e9ebef;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4)';
@@ -440,28 +558,16 @@
     setTimeout(function () { d.remove(); }, 2600);
   }
   async function syncCheck() {
-    if (syncing || !session || !navigator.onLine || document.visibilityState !== 'visible') return;
+    if (syncing || !session || offlineUser || !navigator.onLine || document.visibilityState !== 'visible') return;
+    if (outbox().length) { flush(); return; } // changes made offline go first
     syncing = true;
     try {
       var now = await allStamps();
       if (!stamps) { stamps = now; return; }
       var changed = SYNC_TABLES.filter(function (t) { return now[t] !== stamps[t]; });
       if (!changed.length || busy()) return; // if busy, keep the old fingerprint so it's picked up on the next check
-      var applied = false;
-      if (changed.indexOf('paints') !== -1) {
-        PAINTS = null;
-        window.INV = null;
-        if (pageShown('inv') && window.loadInv) window.loadInv();
-        applied = true;
-      }
-      if (changed.indexOf('wishlist') !== -1 && window.loadWish) {
-        window.loadWish().then(function () { var v = document.getElementById('wishview'); if (v && v.offsetParent !== null && window.renderWish) window.renderWish(); });
-        applied = true;
-      }
-      if (changed.indexOf('recipe_steps') !== -1) {
-        if (pageShown('rec')) now.recipe_steps = stamps.recipe_steps; // leave the recipe you're looking at alone; refresh when you leave the page
-        else { window.RECIPES = null; var rv = document.getElementById('recview'); if (rv) rv.innerHTML = ''; applied = true; }
-      }
+      if (changed.indexOf('recipe_steps') !== -1 && pageShown('rec')) now.recipe_steps = stamps.recipe_steps; // picked up when you leave the recipes page
+      var applied = redraw(changed);
       stamps = now;
       if (applied) toast('🔄 Updated from your other device');
     } catch (e) { /* offline or a hiccup: try again next time */ } finally { syncing = false; }
@@ -470,7 +576,7 @@
   window.addEventListener('focus', syncCheck);
   window.addEventListener('online', syncCheck);
   setInterval(syncCheck, 30000);
-  ready.then(syncBaseline);
+  ready.then(function () { note(); if (outbox().length) flush(); else syncBaseline(); });
   window.pcSyncNow = syncCheck; // for testing
 
   // ---------- Bring my Google Sheet across ----------
@@ -493,6 +599,8 @@
     for (var i = 0; i < rows.length; i += 200) check(await sb.from(table).insert(rows.slice(i, i + 200)));
   }
   async function importSheet(link, code, say) {
+    if (!navigator.onLine) throw new Error('You need a connection to copy your sheet over.');
+    await flush();
     say('Reading your Google Sheet…');
     var theirs = await sheetCall(link, code, 'listPaints');
     var recs = await sheetCall(link, code, 'getRecipes');
@@ -501,7 +609,7 @@
     say('Copying ' + theirs.length + ' paints…');
     var pkey = function (p) { return [low(p.brand), low(p.range), low(p.name)].join('|'); };
     var have = {};
-    (await loadPaints()).forEach(function (d) { have[pkey(d)] = 1; });
+    (await rows('paints', true)).forEach(function (d) { have[pkey(d)] = 1; });
     var newPaints = [], fresh = {};
     theirs.forEach(function (p) {
       if (!String(p.name || '').trim()) return;
@@ -516,7 +624,7 @@
     await insertAll('paints', newPaints);
 
     var haveRec = {};
-    (await recipes()).forEach(function (r) { haveRec[low(r.name)] = 1; });
+    (await recipes(true)).forEach(function (r) { haveRec[low(r.name)] = 1; });
     var steps = [], newRecs = 0;
     (recs || []).forEach(function (rec) {
       var name = String(rec.name || '').trim();
@@ -525,14 +633,14 @@
       newRecs++;
       steps.push(aboutRow(name, rec.notes));
       (rec.steps || []).forEach(function (s, i) {
-        steps.push({ recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 });
+        steps.push({ id: newId(), recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 });
       });
     });
     await insertAll('recipe_steps', steps);
 
     var wkey = function (w) { return low(w.brand) + '|' + low(w.name); };
     var haveWish = {};
-    check(await sb.from('wishlist').select('*')).forEach(function (w) { haveWish[wkey(w)] = 1; });
+    (await rows('wishlist', true)).forEach(function (w) { haveWish[wkey(w)] = 1; });
     var newWants = [];
     (wants || []).forEach(function (w) {
       if (!String(w.name || '').trim() || haveWish[wkey(w)]) return;
@@ -540,7 +648,6 @@
       newWants.push({ brand: w.brand || '', range: w.range || '', name: String(w.name).trim(), reason: w.reason || 'Want', notes: w.notes || '' });
     });
     await insertAll('wishlist', newWants);
-    await loadPaints();
     return { paints: newPaints.length, skipped: theirs.length - newPaints.length, recipes: newRecs, wishes: newWants.length };
   }
 
