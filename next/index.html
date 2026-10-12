@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'f82cbb7b84';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'b1047bdb56';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -323,7 +323,10 @@
     ready.then(function () {
       if (!API[fn]) throw new Error('Unknown action: ' + fn);
       return API[fn].apply(null, args);
-    }).then(function (result) { if (ok) ok(result); }, function (e) {
+    }).then(function (result) {
+      if (!READS.test(fn)) syncBaseline(); // my own change: don't treat it as news from another device
+      if (ok) ok(result);
+    }, function (e) {
       if (READS.test(fn) && attempt < WAITS.length && navigator.onLine && /reach the server/i.test(String(e && e.message))) {
         setTimeout(function () { call(fn, args, ok, fail, attempt + 1); }, WAITS[attempt]);
         return;
@@ -342,6 +345,70 @@
     var p = {}; new URLSearchParams(location.search).forEach(function (v, k) { p[k] = v; }); cb({ parameter: p });
   } } } };
   window.pcCloud = { client: sb, api: API }; // for the "bring my Google Sheet across" tool and for testing
+
+  // ---------- Keeping devices in step ----------
+  // Every so often, and whenever you come back to the app, ask the database for a tiny "fingerprint" of each list
+  // (how many rows, and when the newest change was). If it differs from last time, another device changed something:
+  // forget the saved copy and redraw what's on screen. Nothing is redrawn while you're typing or have a paint open.
+  var SYNC_TABLES = ['paints', 'recipe_steps', 'wishlist'], stamps = null, syncing = false;
+  async function stampOf(table) {
+    var r = await sb.from(table).select('updated_at', { count: 'exact' }).order('updated_at', { ascending: false }).limit(1);
+    if (r.error) throw r.error;
+    return (r.count || 0) + '@' + (r.data && r.data[0] ? r.data[0].updated_at : '');
+  }
+  async function allStamps() {
+    var out = {};
+    for (var i = 0; i < SYNC_TABLES.length; i++) out[SYNC_TABLES[i]] = await stampOf(SYNC_TABLES[i]);
+    return out;
+  }
+  function syncBaseline() { if (session) allStamps().then(function (s) { stamps = s; }, function () {}); }
+  function busy() {
+    var a = document.activeElement, tag = a && a.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;      // typing or choosing
+    var open = function (id) { var e = document.getElementById(id); return !!e && !e.hidden && e.offsetParent !== null; };
+    return open('pdetail') || open('liveov') || open('camov') || !!window.recDraft;  // a paint, the camera, or a recipe being edited
+  }
+  function pageShown(id) { var e = document.getElementById(id); return !!e && !e.hidden; }
+  function toast(text) {
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;padding:8px 14px;border-radius:999px;background:#1f2937;color:#e9ebef;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4)';
+    d.textContent = text;
+    document.body.appendChild(d);
+    setTimeout(function () { d.remove(); }, 2600);
+  }
+  async function syncCheck() {
+    if (syncing || !session || !navigator.onLine || document.visibilityState !== 'visible') return;
+    syncing = true;
+    try {
+      var now = await allStamps();
+      if (!stamps) { stamps = now; return; }
+      var changed = SYNC_TABLES.filter(function (t) { return now[t] !== stamps[t]; });
+      if (!changed.length || busy()) return; // if busy, keep the old fingerprint so it's picked up on the next check
+      var applied = false;
+      if (changed.indexOf('paints') !== -1) {
+        PAINTS = null;
+        window.INV = null;
+        if (pageShown('inv') && window.loadInv) window.loadInv();
+        applied = true;
+      }
+      if (changed.indexOf('wishlist') !== -1 && window.loadWish) {
+        window.loadWish().then(function () { var v = document.getElementById('wishview'); if (v && v.offsetParent !== null && window.renderWish) window.renderWish(); });
+        applied = true;
+      }
+      if (changed.indexOf('recipe_steps') !== -1) {
+        if (pageShown('rec')) now.recipe_steps = stamps.recipe_steps; // leave the recipe you're looking at alone; refresh when you leave the page
+        else { window.RECIPES = null; var rv = document.getElementById('recview'); if (rv) rv.innerHTML = ''; applied = true; }
+      }
+      stamps = now;
+      if (applied) toast('🔄 Updated from your other device');
+    } catch (e) { /* offline or a hiccup: try again next time */ } finally { syncing = false; }
+  }
+  document.addEventListener('visibilitychange', syncCheck);
+  window.addEventListener('focus', syncCheck);
+  window.addEventListener('online', syncCheck);
+  setInterval(syncCheck, 30000);
+  ready.then(syncBaseline);
+  window.pcSyncNow = syncCheck; // for testing
 
   // ---------- Bring my Google Sheet across ----------
   // Reads the paints, recipes and shopping list from the Google Sheet version (through its own connection link and
