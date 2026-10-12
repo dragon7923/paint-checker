@@ -1,6 +1,6 @@
 // Offline helper: keeps the app and the paint lists on the device so it opens fast.
 // Your own data always comes fresh from your account (requests to the database are never cached).
-const CACHE = 'paint-checker-cloud-cb893b19bb';
+const CACHE = 'paint-checker-cloud-b191881183';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
