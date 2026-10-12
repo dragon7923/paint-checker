@@ -18,7 +18,7 @@
 // the signed-in person's rows in the Supabase database instead of a Google Sheet.
 // The database's own rules (Row Level Security) are what keep each person's data private; this file only asks.
 (function () {
-  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = '10c0e0bcc1';
+  var SB_URL = 'https://ewgbdtkeaoguwayymtay.supabase.co', SB_KEY = 'sb_publishable_md1uOYqL25oZVSb-AknbOg_gfpV7TMH', VERSION = 'f82cbb7b84';
   var sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pc-auth' }
   });
@@ -180,6 +180,11 @@
   }
 
   var ABOUT = '(about)'; // a recipe's own notes are kept on a step with this as its section
+  // Rows saved together must all name the same columns: the database fills a column left out of one row with
+  // "nothing" rather than its default, and then refuses the row.
+  function aboutRow(name, notes) {
+    return { recipe: name, section: ABOUT, technique: '', brand: '', paint: '', notes: notes || '', position: 0 };
+  }
   async function recipes() {
     var rows = check(await sb.from('recipe_steps').select('*').order('created_at', { ascending: true }).order('position', { ascending: true }));
     var byName = {}, order = [];
@@ -267,7 +272,7 @@
       var name = String(rec.name || '').trim();
       if (!name) throw new Error('Give the recipe a name.');
       check(await sb.from('recipe_steps').delete().in('recipe', [name, oldName || name]));
-      var rows = [{ recipe: name, section: ABOUT, notes: rec.notes || '', position: 0 }].concat((rec.steps || []).map(function (s, i) {
+      var rows = [aboutRow(name, rec.notes)].concat((rec.steps || []).map(function (s, i) {
         return { recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 };
       }));
       check(await sb.from('recipe_steps').insert(rows));
@@ -388,7 +393,7 @@
       if (!name || haveRec[low(name)]) return;
       haveRec[low(name)] = 1;
       newRecs++;
-      steps.push({ recipe: name, section: ABOUT, notes: rec.notes || '', position: 0 });
+      steps.push(aboutRow(name, rec.notes));
       (rec.steps || []).forEach(function (s, i) {
         steps.push({ recipe: name, section: s.section || '', technique: s.technique || '', brand: s.brand || '', paint: s.paint || '', notes: s.notes || '', position: i + 1 });
       });
