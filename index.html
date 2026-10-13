@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "41954b7077";
+    var VERSION = "400f9b05ae";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -688,7 +688,7 @@
     return CATALOG.filter(function (p) {
       var hay = (p.brand + ' ' + p.range + ' ' + p.code + ' ' + p.name).toLowerCase(), code = p.code.toLowerCase().replace(/[^a-z0-9]/g, '');
       return words.every(function (w, i) { return hay.indexOf(w) !== -1 || isCode(p, w) || (!!tight[i] && !!code && code.indexOf(tight[i]) !== -1); });
-    }).sort(function (a, b) { return (exact(b) - exact(a)) || (starts(b) - starts(a)) || (a.name.length - b.name.length); }).slice(0, 10);
+    }).sort(function (a, b) { return (exact(b) - exact(a)) || (starts(b) - starts(a)) || (a.name.length - b.name.length); }).slice(0, 13);
   }
 
   function pickButtons(list) {
@@ -1361,8 +1361,11 @@
   function quickHits(q) {
     q = String(q).trim();
     if (!q || isBarcode(q)) return [];
-    return findInCatalog(q.replace(/^mpa[-\s]?/i, '')).slice(0, 6);
+    var all = findInCatalog(q.replace(/^mpa[-\s]?/i, ''));
+    quickExtra = Math.max(0, all.length - 12); // how many more matched than are shown
+    return all.slice(0, 12);
   }
+  var quickExtra = 0;
   function codeKey(c) { return String(c).toLowerCase().replace(/^mpa[-\s]?/, '').replace(/^([a-z]*)0+(?=\d)/, '$1'); }
   // True when the typed text is exactly this paint's number or name (not just part of it).
   function quickExact(p, q) {
@@ -1382,7 +1385,7 @@
           (have ? '<br><span class="owned">✅ You have ' + esc(have.qty) + '</span>' : '') + '</span>' +
           (have ? '<button type="button" class="ghost" onclick="quickMore(' + have.row + ')">＋1</button>'
             : '<button type="button" onclick="quickAddPaint(' + CATALOG.indexOf(p) + ')">＋ Add</button>') + '</div>';
-      }).join('') + (!q.trim() ? ''
+      }).join('') + (hits.length && quickExtra ? '<div class="muted" style="margin:6px 2px">More paints match. Type a bit more of the name, range or number to narrow it down.</div>' : '') + (!q.trim() ? ''
         : isBarcode(q) ? '<div class="row"><button type="button" onclick="check(el(\'code\').value)">🔎 Check barcode ' + esc(q.trim()) + '</button></div>'
         : '<div class="row"><button type="button" class="ghost" onclick="addOwn()">✍️ ' +
             (hits.length ? 'Not listed? Add it yourself' : 'Not in the paint list. Add “' + esc(q.trim()) + '” yourself') + '</button></div>');
@@ -1516,7 +1519,7 @@
     google.script.run.withSuccessHandler(function () {
       quickDone('<div class="card yes"><div class="big">✅ Added ' + esc(paint.name) + '</div>' +
         '<div class="muted">' + esc([p.brand, p.range].filter(Boolean).join(' · ')) + '. Type the next one.</div></div>');
-    }).withFailureHandler(fail).addPaint(paint);
+    }).withFailureHandler(function (e) { quickList(); fail(e); }).addPaint(paint); // put the choices back, so it doesn't sit on "Adding…"
   }
 
   function quickMore(row) {
