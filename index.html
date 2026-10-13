@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "400f9b05ae";
+    var VERSION = "fa891c5ea5";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -398,7 +398,7 @@
   <header class="top">
     <div class="logo">🎨 Paint Checker</div>
     <nav class="tabs">
-      <button class="tab" id="tab-scan" onclick="go('scan')"><span class="ti">📷</span><span>Scan</span></button>
+      <button class="tab" id="tab-scan" onclick="go('scan')"><span class="ti">➕</span><span>Add</span></button>
       <button class="tab" id="tab-inv" onclick="go('inv')"><span class="ti">🗂️</span><span>Paints</span></button>
       <button class="tab" id="tab-eq" onclick="go('eq')"><span class="ti">🔁</span><span>Match</span></button>
       <button class="tab" id="tab-hl" onclick="go('hl')"><span class="ti">🎨</span><span>Colours</span></button>
