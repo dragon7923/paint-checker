@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "9757db47f0";
+    var VERSION = "adec9037a7";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -380,6 +380,13 @@
     .erow select { flex: 1; margin-top: 6px; }
     .erow.small button { margin-top: 6px; padding: 6px 12px; font-size: 14px; }
 
+    /* Narrow desktop windows and tablets: tighter tabs so all five fit beside the name */
+    @media (min-width: 701px) and (max-width: 900px) {
+      .top { padding: 10px 12px; gap: 8px; }
+      .logo { font-size: 16px; }
+      .tabs { gap: 0; }
+      .tab { padding: 8px 9px; font-size: 14px; gap: 5px; }
+    }
     /* Phones: tabs move to a bar along the bottom */
     @media (max-width: 700px) {
       body { padding-bottom: 74px; }
