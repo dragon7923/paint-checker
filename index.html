@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "752b0363a9";
+    var VERSION = "9757db47f0";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -463,6 +463,7 @@
         <option value="new">Newest first</option>
       </select>
       <label class="chk"><input type="checkbox" id="iout" onchange="renderInv()"> Show used-up</label>
+      <button type="button" class="ghost" id="iclear" onclick="clearInvFilters()" hidden>✕ Clear filters</button>
     </div>
     <div class="chips" id="chips"></div>
     <div class="sum" id="isum"></div>
@@ -1845,6 +1846,7 @@
     });
     if (chipFam && fams.indexOf(chipFam) === -1) fams.push(chipFam);
     var brand = el('ibrand').value, ptype = el('itype').value, showOut = el('iout').checked;
+    el('iclear').hidden = !(words.length || chipFam || brand || ptype || showOut);
 
     var base = INV.filter(function (p) {
       if (brand && p.brand !== brand) return false;
@@ -1919,6 +1921,16 @@
     el('grid').innerHTML = cards ||
       '<div class="empty">' + (INV.length ? 'You don\'t own any paints that match. Try another colour or word.' + (outNote ? '<br>' + outNote : '') :
         'No paints yet — scan one to start!') + '</div>';
+  }
+
+  // Back to the whole list: search, brand, type, colour chip and "Show used-up" all reset (the sort order stays).
+  function clearInvFilters() {
+    el('iq').value = '';
+    el('ibrand').value = '';
+    el('itype').value = '';
+    el('iout').checked = false;
+    chipFam = '';
+    renderInv();
   }
 
   function toggleChip(f) {
@@ -2502,7 +2514,8 @@
       wishBtn(p, 'Running low', '🛒 Running low') +
       '<div class="row"><button type="button" class="ghost" onclick="scanFor(' + row + ')">📷 ' +
         (String(p.barcode || '').replace(/\D/g, '').length >= 6 ? 'Barcode saved ✓ · scan another bottle' : 'Scan its barcode') + '</button></div>' +
-      '<div class="hint" id="dmsg"></div>';
+      '<div class="hint" id="dmsg"></div>' +
+      (window.pcCloud ? '<div class="row"><button type="button" class="ghost delpaint" onclick="deletePaint(' + row + ', this)">🗑 Delete this paint</button></div>' : '');
     box.innerHTML = '<div class="inner"><div class="row" style="margin-top:0"><button class="ghost" onclick="closeDetail()">← Back</button></div>' +
       colourHelpHtml(p, manage) + '</div>';
     box.hidden = false;
@@ -2527,6 +2540,30 @@
         el('dmsg').textContent = '🔗 Barcode saved. Scanning this bottle now finds it straight away.';
       }).withFailureHandler(function (e) { el('dmsg').textContent = 'Error: ' + (e && e.message || e); }).linkBarcode(row, code);
     });
+  }
+
+  // Removes a paint from your list altogether (for mistakes and duplicates; "Used up" keeps it as a paint you once had).
+  // First tap asks, second tap deletes.
+  function deletePaint(row, btn) {
+    if (!btn.dataset.sure) {
+      btn.dataset.sure = '1';
+      btn.textContent = '⚠️ Tap again to delete it for good';
+      setTimeout(function () { if (btn.isConnected && !btn.disabled) { delete btn.dataset.sure; btn.textContent = '🗑 Delete this paint'; } }, 5000);
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    google.script.run.withSuccessHandler(function () {
+      INV = (INV || []).filter(function (p) { return p.row !== row; });
+      var card = el('pc' + row);
+      if (card) card.remove();
+      closeDetail();
+      if (typeof renderInv === 'function' && !el('inv').hidden) renderInv();
+    }).withFailureHandler(function (e) {
+      btn.disabled = false; delete btn.dataset.sure;
+      btn.textContent = '🗑 Delete this paint';
+      el('dmsg').textContent = '⚠️ ' + (e && e.message || e);
+    }).deletePaint(row);
   }
 
   function closeDetail() {
