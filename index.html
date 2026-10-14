@@ -92,7 +92,7 @@
     if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
 
     // Updates itself: when you come back to the app and a newer version is online, it reloads into it.
-    var VERSION = "9063fb1c87";
+    var VERSION = "041dda45a3";
     function checkUpdate() {
       fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : VERSION; })
         .then(function (v) {
@@ -565,13 +565,14 @@
         .catch(function () { /* list unavailable: Pro Acryl still works */ });
     }).concat(proColours(into), extraPaints(into))).then(function () { return into; });
   }
-  // The account version can hand over the lists from its database instead (window.pcCatalog); if that gives nothing
-  // (not set up yet, or unreachable), the public files are used.
+  // The account version hands over the lists from its database instead (window.pcCatalog). Only when it says the lists
+  // were never published there (null) are the public files used; if the database can't be reached, the app makes do
+  // with what it has, so a dropped connection never unlocks paid brands.
   var catalogReady = (window.pcCatalog
     ? window.pcCatalog().then(function (list) {
-        if (list && list.length) list.forEach(function (p) { CATALOG.push({ brand: p.brand, code: p.code || '', range: p.range || '', name: p.name, hex: p.hex || '' }); });
-        else return publicLists(CATALOG);
-      }, function () { return publicLists(CATALOG); })
+        if (list === null) return publicLists(CATALOG);
+        (list || []).forEach(function (p) { CATALOG.push({ brand: p.brand, code: p.code || '', range: p.range || '', name: p.name, hex: p.hex || '' }); });
+      }, function () {})
     : publicLists(CATALOG)).then(function () { BUILT_IN = CATALOG.length; return loadMine(); });
   window.pcPublicCatalog = function () { return publicLists([]); }; // for the owner's "publish the paint lists" button
 
